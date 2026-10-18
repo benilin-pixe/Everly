@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@keyframes floatNote {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6) rotate(0deg);
+  }
+  25% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-56px) translateX(var(--drift-x, 10px)) scale(1.15) rotate(var(--rot, 18deg));
+  }
+}
+
+.animate-float-note {
+  animation: floatNote 2.8s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
