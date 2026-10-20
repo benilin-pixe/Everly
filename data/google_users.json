@@ -71,5 +71,29 @@
     "createdAt": "2026-10-20T11:50:51.882Z",
     "lastLoginAt": "2026-10-20T11:50:51.882Z",
     "linkedOwnerEmail": "shanalove917@gmail.com"
+  },
+  "owner-sub-111": {
+    "id": "ev_-sub-111_mvgr93lo",
+    "googleSub": "owner-sub-111",
+    "email": "benilin76@gmail.com",
+    "name": "BeniLin",
+    "role": "Owner",
+    "avatarInitials": "BL",
+    "avatarColor": "from-rose-500 to-amber-600",
+    "createdAt": "2026-10-20T14:04:55.547Z",
+    "lastLoginAt": "2026-10-20T14:04:55.547Z",
+    "linkedOwnerEmail": "benilin76@gmail.com"
+  },
+  "member-sub-222": {
+    "id": "ev_-sub-222_mvgr93lp",
+    "googleSub": "member-sub-222",
+    "email": "shanalove917@gmail.com",
+    "name": "Shana Love",
+    "role": "Member",
+    "avatarInitials": "SL",
+    "avatarColor": "from-pink-500 to-rose-600",
+    "createdAt": "2026-10-20T14:04:55.549Z",
+    "lastLoginAt": "2026-10-20T14:04:55.549Z",
+    "linkedOwnerEmail": "shanalove917@gmail.com"
   }
 }
