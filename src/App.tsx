@@ -25,6 +25,10 @@ import {
   setDriveConnectionState,
   UnifiedFileRecord,
 } from './services/everlyStorageService';
+import {
+  testFirestoreConnection,
+  syncUserProfileToFirestore,
+} from './services/firestoreService';
 
 import { Navbar, TabType } from './components/Navbar';
 import { StorageModal } from './components/StorageBar';
@@ -118,6 +122,7 @@ export default function App() {
 
     async function initializeAuth() {
       markAppMounted();
+      testFirestoreConnection().catch((err) => console.warn('[Firestore] Connection test notice:', err));
 
       // 1. Check for pending Google OAuth redirect result upon return
       try {

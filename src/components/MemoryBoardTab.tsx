@@ -7,11 +7,17 @@ import {
   deleteMemoryNote,
 } from '../services/storageService';
 import {
+  subscribeFirestoreMemoryNotes,
+  addMemoryNoteToFirestore,
+  deleteMemoryNoteFromFirestore,
+} from '../services/firestoreService';
+import {
   MessageSquareHeart,
   Send,
   Trash2,
   Calendar,
   ShieldCheck,
+  Cloud,
 } from 'lucide-react';
 
 interface MemoryBoardTabProps {
@@ -23,12 +29,31 @@ export const MemoryBoardTab: React.FC<MemoryBoardTabProps> = ({ currentUser }) =
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSyncedWithFirestore, setIsSyncedWithFirestore] = useState(false);
 
   useEffect(() => {
+    // Initial local cache
     setMessages(getStoredMemoryNotes());
+
+    // Connect to live Firestore subscription
+    const unsubscribe = subscribeFirestoreMemoryNotes(
+      (firestoreNotes) => {
+        if (firestoreNotes.length > 0) {
+          setMessages(firestoreNotes);
+          setIsSyncedWithFirestore(true);
+        }
+      },
+      (err) => {
+        console.warn('[Firestore] Memory board live sync error:', err);
+      }
+    );
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
-  const handlePostMessage = (e: React.FormEvent) => {
+  const handlePostMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim()) {
       setError('Message content cannot be empty.');
@@ -45,18 +70,28 @@ export const MemoryBoardTab: React.FC<MemoryBoardTabProps> = ({ currentUser }) =
         currentUser,
         false
       );
-      setMessages((prev) => [newMsg, ...prev]);
+      setMessages((prev) => [newMsg, ...prev.filter((m) => m.id !== newMsg.id)]);
       setContent('');
-    } catch (err) {
-      setError('Failed to post message. Please try again.');
+
+      // Persist to Firestore
+      await addMemoryNoteToFirestore(newMsg);
+      setIsSyncedWithFirestore(true);
+    } catch (err: any) {
+      console.warn('[Firestore] Error saving memory note to Firestore:', err);
+      // Saved locally already
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteMessage = (id: string) => {
+  const handleDeleteMessage = async (id: string) => {
     const updated = deleteMemoryNote(id);
     setMessages(updated);
+    try {
+      await deleteMemoryNoteFromFirestore(id);
+    } catch (err) {
+      console.warn('[Firestore] Error deleting note from Firestore:', err);
+    }
   };
 
   return (
