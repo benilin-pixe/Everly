@@ -11,6 +11,8 @@ import {
   getDeniedAttempt,
   recordDeniedAttempt,
   clearDeniedAttempt,
+  signOutEverly,
+  handleRedirectAuthIfPresent,
   AUTHORIZED_USERS,
   PRIMARY_OWNER_EMAIL,
   SHARED_USER_EMAIL,
@@ -110,28 +112,57 @@ export default function App() {
   const [deleteTargetFile, setDeleteTargetFile] = useState<MediaFile | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Check persisted auth and load initial files
+  // Check persisted auth, handle OAuth redirect results, and load initial files
   useEffect(() => {
-    markAppMounted();
-    const denied = getDeniedAttempt();
-    if (denied) {
-      setDeniedAttempt(denied.email);
-    } else {
+    let isCancelled = false;
+
+    async function initializeAuth() {
+      markAppMounted();
+
+      // 1. Check for pending Google OAuth redirect result upon return
+      try {
+        const redirectedUser = await handleRedirectAuthIfPresent();
+        if (redirectedUser && !isCancelled) {
+          setCurrentUser(redirectedUser);
+          setIsLoadingAuth(false);
+          return;
+        }
+      } catch (redirectErr: any) {
+        console.warn('[Everly Auth] Error handling OAuth redirect:', redirectErr);
+        if (redirectErr?.message?.includes('not authorized') && !isCancelled) {
+          setDeniedAttempt(redirectErr?.attemptedEmail || 'Google Account');
+          setIsLoadingAuth(false);
+          return;
+        }
+      }
+
+      // 2. Check for active access-denied state
+      const denied = getDeniedAttempt();
+      if (denied && !isCancelled) {
+        setDeniedAttempt(denied.email);
+        setIsLoadingAuth(false);
+        return;
+      }
+
+      // 3. Check persisted authorized user session
       const stored = getStoredUser();
-      if (stored) {
+      if (stored && !isCancelled) {
         setCurrentUser(stored);
-      } else {
-        // Default to owner account for immediate accessibility
-        const devInfo = AUTHORIZED_USERS['benilin76@gmail.com'];
-        const devUser: AuthorizedUser = {
-          email: 'benilin76@gmail.com',
-          ...devInfo,
-        };
-        setCurrentUser(devUser);
-        setStoredUser(devUser);
+      } else if (!isCancelled) {
+        // Visitors must log in through the authorized Log In page; never make every visitor an administrator
+        setCurrentUser(null);
+      }
+
+      if (!isCancelled) {
+        setIsLoadingAuth(false);
       }
     }
-    setIsLoadingAuth(false);
+
+    initializeAuth();
+
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   const [storageStats, setStorageStats] = useState<any>({
@@ -199,7 +230,12 @@ export default function App() {
     setStoredUser(null);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await signOutEverly();
+    } catch (e) {
+      console.warn('[Logout] Error during Google signOut:', e);
+    }
     setCurrentUser(null);
     setStoredUser(null);
     setDeniedAttempt(null);
@@ -325,15 +361,9 @@ export default function App() {
     return (
       <AccessDenied
         attemptedEmail={deniedAttempt}
-        onRetry={() => setDeniedAttempt(null)}
-        onSwitchToAuthorized={(email) => {
-          const info = AUTHORIZED_USERS[email];
-          if (info) {
-            handleLoginSuccess({
-              email,
-              ...info,
-            });
-          }
+        onRetry={() => {
+          clearDeniedAttempt();
+          setDeniedAttempt(null);
         }}
       />
     );

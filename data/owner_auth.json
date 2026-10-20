@@ -1,0 +1,26 @@
+{
+  "benilin76@gmail.com": {
+    "email": "benilin76@gmail.com",
+    "name": "BeniLin",
+    "role": "Owner",
+    "isSetupComplete": true,
+    "setupToken": "consumed_93fd9898d594d68d",
+    "avatarInitials": "BL",
+    "avatarColor": "from-rose-500 to-amber-600",
+    "passwordHash": "442987520af14851383a0ce0c683d359219d875a44d1b05ec2666108a6ad7a0769dc98754d3c242088b03a0e125cf2d5040400936dc21126268384e3e1a078f3",
+    "passwordSalt": "b4abfeaf50c6e09459cfef807e95190a",
+    "linkedGoogleSub": "test-owner-sub",
+    "googleLinkedAt": "2026-10-20T11:50:51.848Z"
+  },
+  "shanalove917@gmail.com": {
+    "email": "shanalove917@gmail.com",
+    "name": "Shana Love",
+    "role": "Member",
+    "isSetupComplete": true,
+    "setupToken": "shana-setup-token-2026-secure",
+    "avatarInitials": "SL",
+    "avatarColor": "from-pink-500 to-rose-600",
+    "linkedGoogleSub": "test-member-sub",
+    "googleLinkedAt": "2026-10-20T11:50:51.882Z"
+  }
+}

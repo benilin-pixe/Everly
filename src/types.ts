@@ -10,6 +10,7 @@ export interface AuthorizedUser {
   avatarColor: string;
   picture?: string;
   accessToken?: string;
+  googleSub?: string;
 }
 
 export interface MediaFile {

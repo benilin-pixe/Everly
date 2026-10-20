@@ -1,4 +1,11 @@
 import { AuthorizedUser, UserRole } from '../types';
+import {
+  launchGoogleSignIn,
+  launchGoogleRedirectSignIn,
+  checkRedirectSignInResult,
+  signOutFromGoogle,
+  GoogleAuthResult,
+} from './firebaseAuth';
 
 export const PRIMARY_OWNER_EMAIL = 'benilin76@gmail.com';
 export const SHARED_USER_EMAIL = 'shanalove917@gmail.com';
@@ -12,85 +19,103 @@ export const AUTHORIZED_USERS: Record<string, { name: string; role: UserRole; av
   },
   [SHARED_USER_EMAIL]: {
     name: 'Shana Love',
-    role: 'Owner',
+    role: 'Member',
     avatarInitials: 'SL',
     avatarColor: 'from-pink-500 to-rose-600',
   },
 };
 
-const AUTH_STORAGE_KEY = 'everly_authorized_user_v3';
-const TOKEN_STORAGE_KEY = 'everly_google_access_token_v3';
-const ACCESS_DENIED_STORAGE_KEY = 'everly_denied_attempt_v3';
-
-// Backend Authentication API calls
-export async function checkAccountSetupStatus(email: string): Promise<{ isSetupComplete: boolean; debugSetupToken?: string }> {
-  try {
-    const res = await fetch('/api/auth/status', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Failed to check setup status.');
-    }
-    return await res.json();
-  } catch (err: any) {
-    throw err;
-  }
-}
-
-export async function setupOwnerPasswordApi(email: string, setupToken: string, password: string): Promise<AuthorizedUser> {
-  const res = await fetch('/api/auth/setup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, setupToken, password }),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Password setup failed.');
-  }
-  const data = await res.json();
-  return data.user;
-}
-
-export async function loginWithPasswordApi(email: string, password: string): Promise<AuthorizedUser> {
-  const res = await fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Invalid email or password.');
-  }
-  const data = await res.json();
-  return data.user;
-}
-
-export async function resetOwnerPasswordApi(email: string, setupToken: string, newPassword: string): Promise<void> {
-  const res = await fetch('/api/auth/reset', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, setupToken, newPassword }),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Password reset failed.');
-  }
-}
+const AUTH_STORAGE_KEY = 'everly_google_user_v5';
+const TOKEN_STORAGE_KEY = 'everly_google_access_token_v5';
+const ACCESS_DENIED_STORAGE_KEY = 'everly_denied_attempt_v5';
 
 // OAuth Client ID from Google Cloud / Firebase applet config
 export const GOOGLE_OAUTH_CLIENT_ID = '370113877663-fgqpe37aca3o8227ieo3cnrs0ve1js1g.apps.googleusercontent.com';
 
+/**
+ * Verifies a Google sign-in identity with the backend and returns the Everly profile
+ */
+export async function authenticateWithGoogleBackend(payload: GoogleAuthResult): Promise<AuthorizedUser> {
+  const res = await fetch('/api/auth/google', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      googleSub: payload.googleSub,
+      email: payload.email,
+      name: payload.name,
+      avatarUrl: payload.avatarUrl,
+      idToken: payload.idToken,
+      emailVerified: payload.emailVerified,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const errorMsg = err.error || 'This Google account is not authorized to access Everly.';
+    recordDeniedAttempt(payload.email || 'Unknown Account');
+    const authErr = new Error(errorMsg);
+    (authErr as any).attemptedEmail = payload.email;
+    throw authErr;
+  }
+
+  const data = await res.json();
+  const user: AuthorizedUser = {
+    email: data.user.email,
+    name: data.user.name,
+    role: data.user.role,
+    avatarInitials: data.user.avatarInitials,
+    avatarColor: data.user.avatarColor,
+    picture: data.user.avatarUrl,
+    googleSub: data.user.googleSub,
+    accessToken: payload.accessToken,
+  };
+
+  setStoredUser(user, payload.accessToken);
+  clearDeniedAttempt();
+  return user;
+}
+
+/**
+ * Checks for a pending redirect sign-in result on page load
+ */
+export async function handleRedirectAuthIfPresent(): Promise<AuthorizedUser | null> {
+  const result = await checkRedirectSignInResult();
+  if (result) {
+    return await authenticateWithGoogleBackend(result);
+  }
+  return null;
+}
+
+/**
+ * Performs full Google sign-in flow via popup:
+ * 1. Launches official Google OAuth popup (Firebase Auth)
+ * 2. Transmits verified Google identity to backend
+ * 3. Saves session and returns authenticated user
+ */
+export async function signInWithGoogleFlow(): Promise<AuthorizedUser> {
+  const googleResult = await launchGoogleSignIn();
+  return await authenticateWithGoogleBackend(googleResult);
+}
+
+/**
+ * Initiates Google OAuth redirect flow
+ */
+export async function signInWithGoogleRedirectFlow(): Promise<void> {
+  await launchGoogleRedirectSignIn();
+}
+
 export const isEmailAuthorized = (email: string): boolean => {
-  const normalized = email.trim().toLowerCase();
-  return Boolean(AUTHORIZED_USERS[normalized]);
+  if (!email || !email.includes('@')) return false;
+  const lower = email.toLowerCase().trim();
+  return lower === PRIMARY_OWNER_EMAIL || lower === SHARED_USER_EMAIL;
 };
 
-export const getUserRole = (email: string): UserRole | null => {
+export const getUserRole = (email: string): UserRole => {
+  if (!email) return 'Member';
   const normalized = email.trim().toLowerCase();
-  return AUTHORIZED_USERS[normalized]?.role || null;
+  if (normalized === PRIMARY_OWNER_EMAIL) return 'Owner';
+  if (normalized === SHARED_USER_EMAIL) return 'Member';
+  return 'Member';
 };
 
 export const getStoredUser = (): AuthorizedUser | null => {
@@ -99,12 +124,8 @@ export const getStoredUser = (): AuthorizedUser | null => {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && parsed.email && isEmailAuthorized(parsed.email)) {
-      const normalized = parsed.email.trim().toLowerCase();
-      const defaultInfo = AUTHORIZED_USERS[normalized] || {};
-      // Re-attach access token if available
       const token = localStorage.getItem(TOKEN_STORAGE_KEY);
       return {
-        ...defaultInfo,
         ...parsed,
         accessToken: token || parsed.accessToken,
       };
@@ -142,7 +163,7 @@ export const recordDeniedAttempt = (attemptedEmail: string) => {
     JSON.stringify({
       email: attemptedEmail,
       timestamp: new Date().toISOString(),
-      message: 'Your Google account is not authorized to access Everly.',
+      message: 'This Google account is not authorized to access Everly.',
     })
   );
 };
@@ -160,6 +181,12 @@ export const clearDeniedAttempt = () => {
   localStorage.removeItem(ACCESS_DENIED_STORAGE_KEY);
 };
 
+export async function signOutEverly(): Promise<void> {
+  await signOutFromGoogle();
+  setStoredUser(null);
+  clearDeniedAttempt();
+}
+
 /**
  * Access Control Permission Helpers
  */
@@ -175,81 +202,5 @@ export const canDeleteFile = (user: AuthorizedUser | null, fileAuthorEmail: stri
 };
 
 export const canUpload = (user: AuthorizedUser | null): boolean => {
-  return Boolean(user && isEmailAuthorized(user.email));
+  return Boolean(user && user.email && isEmailAuthorized(user.email));
 };
-
-/**
- * Initiates Google OAuth 2.0 via Google Identity Services Token Client
- */
-export async function authenticateWithGoogle(): Promise<AuthorizedUser> {
-  return new Promise((resolve, reject) => {
-    // Check if google client script is ready
-    const google = (window as any).google;
-    if (!google || !google.accounts || !google.accounts.oauth2) {
-      reject(new Error('Google Identity Services is initializing. Please try again in a moment.'));
-      return;
-    }
-
-    try {
-      const client = google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_OAUTH_CLIENT_ID,
-        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid',
-        callback: async (tokenResponse: any) => {
-          if (tokenResponse.error) {
-            reject(new Error(tokenResponse.error_description || tokenResponse.error));
-            return;
-          }
-
-          const accessToken = tokenResponse.access_token;
-          if (!accessToken) {
-            reject(new Error('No access token received from Google.'));
-            return;
-          }
-
-          try {
-            // Fetch Google User Profile
-            const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-              },
-            });
-
-            if (!userInfoRes.ok) {
-              throw new Error('Failed to retrieve user profile from Google.');
-            }
-
-            const profile = await userInfoRes.json();
-            const email = (profile.email || '').trim().toLowerCase();
-
-            // Authorization Gate
-            if (!isEmailAuthorized(email)) {
-              recordDeniedAttempt(email);
-              reject(new Error('Your Google account is not authorized to access Everly.'));
-              return;
-            }
-
-            const info = AUTHORIZED_USERS[email];
-            const authorizedUser: AuthorizedUser = {
-              email,
-              name: profile.name || info.name,
-              role: info.role,
-              avatarInitials: info.avatarInitials,
-              avatarColor: info.avatarColor,
-              picture: profile.picture,
-              accessToken,
-            };
-
-            setStoredUser(authorizedUser, accessToken);
-            resolve(authorizedUser);
-          } catch (fetchErr: any) {
-            reject(fetchErr);
-          }
-        },
-      });
-
-      client.requestAccessToken({ prompt: 'consent' });
-    } catch (err: any) {
-      reject(err);
-    }
-  });
-}

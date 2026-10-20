@@ -5,7 +5,7 @@ import { formatBytes } from '../services/storageService';
 import { LiveClock } from './LiveClock';
 
 interface HeroHeaderProps {
-  currentUser: AuthorizedUser;
+  currentUser?: AuthorizedUser | null;
   stats: StorageStats;
   onOpenStorageModal: () => void;
   activeTab: string;
@@ -18,28 +18,29 @@ export const HeroHeader: React.FC<HeroHeaderProps> = ({
 }) => {
   const { greeting, timeIcon, subGreeting } = useMemo(() => {
     const hour = new Date().getHours();
+    const nameStr = currentUser?.name ? `, ${currentUser.name.split(' ')[0]}` : '';
 
     if (hour >= 5 && hour < 12) {
       return {
-        greeting: `Good morning, ${currentUser.name.split(' ')[0]}`,
+        greeting: `Good morning${nameStr}`,
         timeIcon: <Sunrise className="w-4 h-4 text-amber-300" />,
         subGreeting: `Your next favourite moment starts here. ✨`,
       };
     } else if (hour >= 12 && hour < 17) {
       return {
-        greeting: `Good afternoon, ${currentUser.name.split(' ')[0]}`,
+        greeting: `Good afternoon${nameStr}`,
         timeIcon: <Sun className="w-4 h-4 text-amber-400" />,
         subGreeting: `Your next favourite moment starts here. ✨`,
       };
     } else if (hour >= 17 && hour < 22) {
       return {
-        greeting: `Good evening, ${currentUser.name.split(' ')[0]}`,
+        greeting: `Good evening${nameStr}`,
         timeIcon: <Sunset className="w-4 h-4 text-rose-400" />,
         subGreeting: `Your next favourite moment starts here. ✨`,
       };
     } else {
       return {
-        greeting: `Late night quietude, ${currentUser.name.split(' ')[0]}`,
+        greeting: `Late night quietude${nameStr}`,
         timeIcon: <Moon className="w-4 h-4 text-indigo-300" />,
         subGreeting: `Your next favourite moment starts here. ✨`,
       };

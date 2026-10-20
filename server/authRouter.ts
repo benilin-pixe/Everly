@@ -1,83 +1,110 @@
 import express, { Request, Response } from 'express';
 import * as authStore from './authStore';
 
+// In-memory rate limiter for auth endpoints (25 attempts per minute per IP)
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+}
+const rateLimitMap = new Map<string, RateLimitRecord>();
+
+function checkRateLimit(ip: string, limit = 25, windowMs = 60000): boolean {
+  const now = Date.now();
+  const record = rateLimitMap.get(ip);
+  if (!record || now > record.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (record.count >= limit) {
+    return false;
+  }
+  record.count += 1;
+  return true;
+}
+
 export function createAuthRouter() {
   const router = express.Router();
 
-  // Check account setup & existence status
-  router.post('/status', (req: Request, res: Response) => {
-    const { email } = req.body;
-    if (!email || !authStore.isAuthorizedOwnerEmail(email)) {
-      res.status(400).json({ error: 'Unauthorized or invalid email address.' });
-      return;
-    }
-
-    const internal = authStore.getOwnerInternalRecord(email);
-    if (!internal) {
-      res.status(404).json({ error: 'Owner account not found.' });
-      return;
-    }
-
+  // Authentication configuration and provider status
+  router.get('/config', (_req: Request, res: Response) => {
     res.json({
-      email: internal.email,
-      name: internal.name,
-      role: internal.role,
-      isSetupComplete: internal.isSetupComplete,
-      // For developer / test convenience, output setup token in non-production environments
-      debugSetupToken: process.env.NODE_ENV !== 'production' ? internal.setupToken : undefined,
+      authProvider: 'google',
+      supportedProviders: ['google'],
+      googleAuthOnly: true,
+      passwordsEnabled: false,
     });
   });
 
-  // Initial password setup
-  router.post('/setup', (req: Request, res: Response) => {
-    const { email, setupToken, password } = req.body;
-    if (!email || !setupToken || !password) {
-      res.status(400).json({ error: 'Missing required setup parameters.' });
+  // Verify and authenticate Google identity
+  router.post('/google', (req: Request, res: Response) => {
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`google_auth_${clientIp}`, 30, 60000)) {
+      res.status(429).json({ error: 'Too many authentication attempts. Please wait a moment and try again.' });
       return;
     }
 
-    const result = authStore.setupOwnerPassword(email, setupToken, password);
-    if (!result.success) {
-      res.status(400).json({ error: result.error || 'Password setup failed.' });
+    const { googleSub, email, name, avatarUrl } = req.body;
+
+    if (!googleSub || typeof googleSub !== 'string' || googleSub.trim().length === 0) {
+      res.status(400).json({ error: 'Missing or invalid Google subject identifier (googleSub).' });
       return;
     }
 
-    const user = authStore.getOwnerRecord(email);
-    res.json({ success: true, user });
-  });
-
-  // Secure login with email and password
-  router.post('/login', (req: Request, res: Response) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      res.status(400).json({ error: 'Missing email or password.' });
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      res.status(400).json({ error: 'Missing or invalid verified Google email.' });
       return;
     }
 
-    const result = authStore.verifyOwnerLogin(email, password);
+    const result = authStore.authenticateWithGoogle({
+      googleSub: googleSub.trim(),
+      email: email.trim(),
+      name,
+      avatarUrl,
+      emailVerified: req.body.emailVerified,
+    });
+
     if (!result.success || !result.user) {
-      res.status(401).json({ error: result.error || 'Invalid email or password.' });
+      res.status(403).json({ error: result.error || 'This Google account is not authorized to access Everly.' });
       return;
     }
 
     res.json({ success: true, user: result.user });
   });
 
-  // Password reset / recovery
-  router.post('/reset', (req: Request, res: Response) => {
-    const { email, setupToken, newPassword } = req.body;
-    if (!email || !setupToken || !newPassword) {
-      res.status(400).json({ error: 'Missing required reset parameters.' });
+  // Retrieve existing authenticated Google profile
+  router.get('/profile/:googleSub', (req: Request, res: Response) => {
+    const { googleSub } = req.params;
+    if (!googleSub) {
+      res.status(400).json({ error: 'Missing googleSub parameter.' });
       return;
     }
 
-    const result = authStore.resetOwnerPassword(email, setupToken, newPassword);
-    if (!result.success) {
-      res.status(400).json({ error: result.error || 'Password reset failed.' });
+    const profile = authStore.getGoogleProfileBySub(googleSub);
+    if (!profile) {
+      res.status(404).json({ error: 'User profile not found.' });
       return;
     }
 
-    res.json({ success: true, message: 'Password reset successfully. You can now log in.' });
+    res.json({ success: true, user: profile });
+  });
+
+  // Retired legacy password and public registration routes
+  const retiredAuthHandler = (_req: Request, res: Response) => {
+    res.status(410).json({
+      error: 'Everly has transitioned to Google Sign-In only. Passwords and separate account creation have been permanently retired.',
+    });
+  };
+
+  router.post('/register', retiredAuthHandler);
+  router.post('/login', retiredAuthHandler);
+  router.post('/setup', retiredAuthHandler);
+  router.post('/reset', retiredAuthHandler);
+  router.post('/status', (_req: Request, res: Response) => {
+    res.json({
+      authProvider: 'google',
+      isSetupComplete: true,
+      passwordsEnabled: false,
+    });
   });
 
   return router;
