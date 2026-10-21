@@ -12,7 +12,6 @@ import {
   recordDeniedAttempt,
   clearDeniedAttempt,
   signOutEverly,
-  handleRedirectAuthIfPresent,
   AUTHORIZED_USERS,
   PRIMARY_OWNER_EMAIL,
   SHARED_USER_EMAIL,
@@ -124,24 +123,7 @@ export default function App() {
       markAppMounted();
       testFirestoreConnection().catch((err) => console.warn('[Firestore] Connection test notice:', err));
 
-      // 1. Check for pending Google OAuth redirect result upon return
-      try {
-        const redirectedUser = await handleRedirectAuthIfPresent();
-        if (redirectedUser && !isCancelled) {
-          setCurrentUser(redirectedUser);
-          setIsLoadingAuth(false);
-          return;
-        }
-      } catch (redirectErr: any) {
-        console.warn('[Everly Auth] Error handling OAuth redirect:', redirectErr);
-        if (redirectErr?.message?.includes('not authorized') && !isCancelled) {
-          setDeniedAttempt(redirectErr?.attemptedEmail || 'Google Account');
-          setIsLoadingAuth(false);
-          return;
-        }
-      }
-
-      // 2. Check for active access-denied state
+      // 1. Check for active access-denied state
       const denied = getDeniedAttempt();
       if (denied && !isCancelled) {
         setDeniedAttempt(denied.email);

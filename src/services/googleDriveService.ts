@@ -2,7 +2,7 @@
  * Google Drive API v3 Service Layer for Everly
  * Handles dedicated shared folder management (Everly Shared Storage),
  * organized subfolders (Photos, Videos, Music, Backgrounds, Memories, Other),
- * multipart file uploading, media streaming, and quota reporting.
+ * multipart file uploading, media streaming, and quota reporting with resilient error classification and retry logic.
  */
 
 export interface GoogleDriveFile {
@@ -34,31 +34,60 @@ const SUBFOLDERS = ['Photos', 'Videos', 'Music', 'Backgrounds', 'Memories', 'Oth
 export type EverlySubfolder = typeof SUBFOLDERS[number];
 
 /**
- * Executes an authenticated Google Drive API request with error handling
+ * Executes an authenticated Google Drive API request with error classification and exponential backoff retry for transient errors.
  */
-async function driveFetch(endpoint: string, accessToken: string, options: RequestInit = {}): Promise<Response> {
+async function driveFetch(endpoint: string, accessToken: string, options: RequestInit = {}, retries = 3, delay = 1000): Promise<Response> {
   const headers = new Headers(options.headers || {});
   headers.set('Authorization', `Bearer ${accessToken}`);
 
-  const response = await fetch(endpoint, {
-    ...options,
-    headers,
-  });
+  try {
+    const response = await fetch(endpoint, {
+      ...options,
+      headers,
+    });
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw new Error('Google Drive authorization token has expired. Please sign in again.');
+    if (response.ok) {
+      return response;
     }
+
+    if (response.status === 401) {
+      const authErr = new Error('Google Drive authorization token has expired. Please sign in again.');
+      (authErr as any).isAuthExpired = true;
+      (authErr as any).status = 401;
+      throw authErr;
+    }
+
+    if (response.status === 403) {
+      const forbiddenErr = new Error('Google Drive API Error (403 Forbidden): Insufficient permissions or storage quota exceeded.');
+      (forbiddenErr as any).status = 403;
+      throw forbiddenErr;
+    }
+
+    // Transient errors (429 Rate Limit, 5xx Server Error)
+    if ((response.status === 429 || response.status >= 500) && retries > 0) {
+      await new Promise((r) => setTimeout(r, delay));
+      return driveFetch(endpoint, accessToken, options, retries - 1, delay * 2);
+    }
+
     const errText = await response.text();
     let parsedMessage = errText;
     try {
       const errJson = JSON.parse(errText);
       parsedMessage = errJson.error?.message || errText;
     } catch {}
-    throw new Error(`Google Drive API Error (${response.status}): ${parsedMessage}`);
+    const apiErr = new Error(`Google Drive API Error (${response.status}): ${parsedMessage}`);
+    (apiErr as any).status = response.status;
+    throw apiErr;
+  } catch (networkErr: any) {
+    if (networkErr?.status === 401 || networkErr?.status === 403) {
+      throw networkErr;
+    }
+    if (retries > 0 && (networkErr.name === 'TypeError' || networkErr.message?.includes('network'))) {
+      await new Promise((r) => setTimeout(r, delay));
+      return driveFetch(endpoint, accessToken, options, retries - 1, delay * 2);
+    }
+    throw networkErr;
   }
-
-  return response;
 }
 
 /**
@@ -158,144 +187,107 @@ export async function uploadFileToDrive(
     // Attempt to locate target subfolder dynamically
     const rootId = await findFolder(accessToken, ROOT_FOLDER_NAME);
     if (rootId) {
-      parentId = (await findFolder(accessToken, targetFolder, rootId)) || rootId;
+      parentId = (await findFolder(accessToken, targetFolder, rootId)) ?? undefined;
+      if (!parentId) {
+        parentId = (await createFolder(accessToken, targetFolder, rootId)) ?? undefined;
+      }
+    } else {
+      const newRootId = await createFolder(accessToken, ROOT_FOLDER_NAME);
+      parentId = (newRootId ? await createFolder(accessToken, targetFolder, newRootId) : null) ?? undefined;
     }
   }
 
-  const metadata = {
+  const metadata: any = {
     name: fileName,
-    mimeType: file.type || 'application/octet-stream',
-    description: caption || `Uploaded via Everly (${targetFolder})`,
     parents: parentId ? [parentId] : undefined,
   };
 
-  const boundary = '-------EverlyDriveUploadBoundary' + Math.random().toString(36).substring(2);
-  const delimiter = `\r\n--${boundary}\r\n`;
-  const closeDelimiter = `\r\n--${boundary}--`;
+  if (caption) {
+    metadata.description = caption;
+  }
 
-  // Read file as ArrayBuffer
-  const fileData = await file.arrayBuffer();
+  const form = new FormData();
+  form.append(
+    'metadata',
+    new Blob([JSON.stringify(metadata)], { type: 'application/json' })
+  );
+  form.append('file', file);
 
-  const metadataContentType = 'application/json; charset=UTF-8';
-  const fileContentType = file.type || 'application/octet-stream';
-
-  const multipartRequestBody = new Blob([
-    delimiter,
-    `Content-Type: ${metadataContentType}\r\n\r\n`,
-    JSON.stringify(metadata),
-    delimiter,
-    `Content-Type: ${fileContentType}\r\n`,
-    'Content-Transfer-Encoding: base64\r\n\r\n',
-    arrayBufferToBase64(fileData),
-    closeDelimiter,
-  ]);
-
-  const uploadRes = await driveFetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,thumbnailLink,webContentLink,webViewLink,createdTime',
+  const res = await driveFetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,createdTime,modifiedTime,thumbnailLink,webContentLink,webViewLink,parents,description',
     accessToken,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': `multipart/related; boundary=${boundary}`,
-      },
-      body: multipartRequestBody,
+      body: form,
     }
   );
 
-  return await uploadRes.json();
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-/**
- * Lists files in a specific Google Drive folder
- */
-export async function listDriveFiles(
-  accessToken: string,
-  folderId?: string
-): Promise<GoogleDriveFile[]> {
-  let query = 'trashed = false';
-  if (folderId) {
-    query += ` and '${folderId}' in parents`;
-  }
-
-  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-    query
-  )}&fields=files(id,name,mimeType,size,thumbnailLink,webContentLink,webViewLink,createdTime,description)&orderBy=createdTime desc&pageSize=100`;
-
-  const res = await driveFetch(url, accessToken);
-  const data = await res.json();
-  return data.files || [];
+  return await res.json();
 }
 
 /**
  * Deletes a file from Google Drive
  */
-export async function deleteDriveFile(accessToken: string, fileId: string): Promise<boolean> {
-  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, accessToken, {
+export async function deleteDriveFile(accessToken: string, fileId: string): Promise<void> {
+  await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, accessToken, {
     method: 'DELETE',
   });
-  return res.ok;
 }
 
 /**
- * Renames a file in Google Drive
+ * Renames or updates metadata of a file in Google Drive
  */
-export async function renameDriveFile(
-  accessToken: string,
-  fileId: string,
-  newName: string
-): Promise<boolean> {
-  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, accessToken, {
+export async function renameDriveFile(accessToken: string, fileId: string, newName: string): Promise<void> {
+  await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, accessToken, {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ name: newName }),
   });
-  return res.ok;
 }
 
 /**
- * Retrieves file metadata from Google Drive
+ * Lists all files in the Everly shared storage folder hierarchy
  */
-export async function getDriveFileMetadata(accessToken: string, fileId: string): Promise<GoogleDriveFile> {
-  const res = await driveFetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType,size,thumbnailLink,webContentLink,webViewLink,createdTime,description`,
-    accessToken
-  );
-  return await res.json();
+export async function listDriveFiles(accessToken: string): Promise<GoogleDriveFile[]> {
+  const rootId = await findFolder(accessToken, ROOT_FOLDER_NAME);
+  if (!rootId) {
+    return [];
+  }
+
+  // Get all subfolder IDs
+  const subIds: string[] = [rootId];
+  for (const subfolder of SUBFOLDERS) {
+    const subId = await findFolder(accessToken, subfolder, rootId);
+    if (subId) subIds.push(subId);
+  }
+
+  // Query files whose parents are any of the Everly folders
+  const parentQuery = subIds.map((id) => `'${id}' in parents`).join(' or ');
+  const query = `(${parentQuery}) and trashed = false`;
+
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,createdTime,modifiedTime,thumbnailLink,webContentLink,webViewLink,parents,description)&pageSize=1000&spaces=drive`;
+  const res = await driveFetch(url, accessToken);
+  const data = await res.json();
+
+  return data.files || [];
 }
 
 /**
- * Fetches the user's Google Drive Storage Quota
+ * Gets storage quota usage for Drive account
  */
-export async function getDriveStorageQuota(
-  accessToken: string
-): Promise<{ limitBytes: number; usageBytes: number; usageInDriveBytes: number }> {
+export async function getDriveStorageQuota(accessToken: string): Promise<{ usedBytes: number; totalBytes: number }> {
   try {
     const res = await driveFetch('https://www.googleapis.com/drive/v3/about?fields=storageQuota', accessToken);
     const data = await res.json();
-    const quota = data.storageQuota || {};
-    return {
-      limitBytes: parseInt(quota.limit || '16106127360', 10), // default 15GB if unlimited
-      usageBytes: parseInt(quota.usage || '3221225472', 10),
-      usageInDriveBytes: parseInt(quota.usageInDrive || '2147483648', 10),
-    };
-  } catch (err) {
-    console.warn('Could not fetch storage quota:', err);
-    return {
-      limitBytes: 15 * 1024 * 1024 * 1024,
-      usageBytes: 2.8 * 1024 * 1024 * 1024,
-      usageInDriveBytes: 2.1 * 1024 * 1024 * 1024,
-    };
-  }
+    const quota = data.storageQuota;
+    if (quota) {
+      return {
+        usedBytes: Number(quota.usageInDrive) || Number(quota.usage) || 0,
+        totalBytes: Number(quota.limit) || (15 * 1024 * 1024 * 1024),
+      };
+    }
+  } catch {}
+  return { usedBytes: 0, totalBytes: 15 * 1024 * 1024 * 1024 };
 }

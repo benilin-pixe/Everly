@@ -7,10 +7,11 @@
     "setupToken": "consumed_93fd9898d594d68d",
     "avatarInitials": "BL",
     "avatarColor": "from-rose-500 to-amber-600",
-    "passwordHash": "442987520af14851383a0ce0c683d359219d875a44d1b05ec2666108a6ad7a0769dc98754d3c242088b03a0e125cf2d5040400936dc21126268384e3e1a078f3",
-    "passwordSalt": "b4abfeaf50c6e09459cfef807e95190a",
+    "passwordHash": "bad40dd1bca84c7cc7e053f62057cc002f40d4199f7507cb57dd98847344353f18fffe100169043339fca50aa46868d44ffdf431b6ea41dce881b897a97dc240",
+    "passwordSalt": "ebd909c0e029eb69ef3bf668f3d10d23",
     "linkedGoogleSub": "owner-sub-111",
-    "googleLinkedAt": "2026-10-20T14:04:55.547Z"
+    "googleLinkedAt": "2026-10-20T14:04:55.547Z",
+    "lastLoginAt": "2026-10-20T14:13:45.089Z"
   },
   "shanalove917@gmail.com": {
     "email": "shanalove917@gmail.com",

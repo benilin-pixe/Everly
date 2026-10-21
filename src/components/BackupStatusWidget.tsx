@@ -15,6 +15,7 @@ import {
   getSyncStatus,
   subscribeSyncStatus,
   forceCloudSync,
+  reconnectDriveA,
   SyncStatus,
 } from '../services/everlySyncService';
 import { UnifiedFileRecord } from '../services/everlyStorageService';
@@ -107,6 +108,8 @@ export const BackupStatusWidget: React.FC<BackupStatusWidgetProps> = ({
     };
   }, []);
 
+  const [isReconnecting, setIsReconnecting] = useState(false);
+
   const handleForceSync = async () => {
     if (syncStatus.isSyncing) return;
 
@@ -118,6 +121,16 @@ export const BackupStatusWidget: React.FC<BackupStatusWidgetProps> = ({
       setTimeout(() => {
         setJustSynced(false);
       }, 3500);
+    }
+  };
+
+  const handleReconnect = async () => {
+    if (isReconnecting) return;
+    setIsReconnecting(true);
+    const res = await reconnectDriveA();
+    setIsReconnecting(false);
+    if (res.success && onFilesUpdated) {
+      forceCloudSync(onFilesUpdated);
     }
   };
 
@@ -140,7 +153,7 @@ export const BackupStatusWidget: React.FC<BackupStatusWidgetProps> = ({
               className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-[#090d16] ${
                 syncStatus.isSyncing
                   ? 'bg-amber-400 animate-ping'
-                  : syncStatus.error
+                  : syncStatus.isDriveAAuthExpired || syncStatus.error
                   ? 'bg-rose-500'
                   : 'bg-emerald-400'
               }`}
@@ -149,14 +162,16 @@ export const BackupStatusWidget: React.FC<BackupStatusWidgetProps> = ({
 
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-slate-300 font-medium">
-              <span className="truncate">Google Drive Backup</span>
-              {relative && <span className="text-[10px] text-slate-500">({relative})</span>}
+              <span className="truncate">{syncStatus.isDriveAAuthExpired ? 'Drive A Auth Expired' : 'Google Drive Backup'}</span>
+              {relative && !syncStatus.isDriveAAuthExpired && <span className="text-[10px] text-slate-500">({relative})</span>}
             </div>
             <div className="text-[10px] text-slate-400 truncate" title={full}>
               {syncStatus.isSyncing ? (
                 <span className="text-amber-400 font-medium flex items-center gap-1">
                   <RefreshCw className="w-2.5 h-2.5 animate-spin inline" /> Syncing...
                 </span>
+              ) : syncStatus.isDriveAAuthExpired ? (
+                <span className="text-rose-400 font-medium">Token expired. Reconnect required.</span>
               ) : (
                 <span>Last sync: {formatted}</span>
               )}
@@ -166,18 +181,25 @@ export const BackupStatusWidget: React.FC<BackupStatusWidgetProps> = ({
 
         <button
           type="button"
-          onClick={handleForceSync}
-          disabled={syncStatus.isSyncing}
+          onClick={syncStatus.isDriveAAuthExpired ? handleReconnect : handleForceSync}
+          disabled={syncStatus.isSyncing || isReconnecting}
           className={`shrink-0 px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-            syncStatus.isSyncing
+            syncStatus.isDriveAAuthExpired
+              ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-sm shadow-rose-950 font-bold'
+              : syncStatus.isSyncing
               ? 'bg-slate-800 text-slate-400 cursor-not-allowed opacity-70'
               : justSynced
               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
               : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-sm shadow-indigo-950'
           }`}
-          title="Force an immediate cloud synchronization with Google Drive"
+          title={syncStatus.isDriveAAuthExpired ? 'Reconnect Google Drive A account' : 'Force an immediate cloud synchronization with Google Drive'}
         >
-          {syncStatus.isSyncing ? (
+          {syncStatus.isDriveAAuthExpired ? (
+            <>
+              <RefreshCw className={`w-3 h-3 ${isReconnecting ? 'animate-spin' : ''}`} />
+              <span>{isReconnecting ? 'Connecting...' : 'Reconnect Drive A'}</span>
+            </>
+          ) : syncStatus.isSyncing ? (
             <>
               <RefreshCw className="w-3 h-3 animate-spin" />
               <span>Syncing</span>

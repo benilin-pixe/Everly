@@ -1,18 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '../data');
 const AUTH_FILE = path.join(DATA_DIR, 'owner_auth.json');
-const GOOGLE_USERS_FILE = path.join(DATA_DIR, 'google_users.json');
 
 export const BENILIN_EMAIL = 'benilin76@gmail.com';
 export const SHANALOVE_EMAIL = 'shanalove917@gmail.com';
 
-// Access Policy: Only benilin76 (OWNER) and shanalove917 (MEMBER) are authorized
-export const AUTHORIZED_GOOGLE_ACCOUNTS: Record<
+export const AUTHORIZED_USERS: Record<
   string,
   {
     role: 'Owner' | 'Member';
@@ -28,7 +27,7 @@ export const AUTHORIZED_GOOGLE_ACCOUNTS: Record<
     avatarColor: 'from-rose-500 to-amber-600',
   },
   [SHANALOVE_EMAIL]: {
-    role: 'Member',
+    role: 'Owner',
     name: 'Shana Love',
     avatarInitials: 'SL',
     avatarColor: 'from-pink-500 to-rose-600',
@@ -42,22 +41,10 @@ export interface OwnerAuthRecord {
   isSetupComplete: boolean;
   avatarInitials: string;
   avatarColor: string;
-  linkedGoogleSub?: string;
-  googleLinkedAt?: string;
-}
-
-export interface GoogleAuthProfile {
-  id: string;
-  googleSub: string;
-  email: string;
-  name: string;
-  role: 'Owner' | 'Member';
-  avatarInitials: string;
-  avatarColor: string;
-  avatarUrl?: string;
+  passwordHash?: string;
+  passwordSalt?: string;
   createdAt: string;
-  lastLoginAt: string;
-  linkedOwnerEmail?: string;
+  lastLoginAt?: string;
 }
 
 const DEFAULT_AUTH_STATE: Record<string, OwnerAuthRecord> = {
@@ -65,22 +52,23 @@ const DEFAULT_AUTH_STATE: Record<string, OwnerAuthRecord> = {
     email: BENILIN_EMAIL,
     name: 'BeniLin',
     role: 'Owner',
-    isSetupComplete: true,
+    isSetupComplete: false,
     avatarInitials: 'BL',
     avatarColor: 'from-rose-500 to-amber-600',
+    createdAt: new Date().toISOString(),
   },
   [SHANALOVE_EMAIL]: {
     email: SHANALOVE_EMAIL,
     name: 'Shana Love',
-    role: 'Member',
-    isSetupComplete: true,
+    role: 'Owner',
+    isSetupComplete: false,
     avatarInitials: 'SL',
     avatarColor: 'from-pink-500 to-rose-600',
+    createdAt: new Date().toISOString(),
   },
 };
 
 let authCache: Record<string, OwnerAuthRecord> | null = null;
-let googleUsersCache: Record<string, GoogleAuthProfile> | null = null;
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -103,7 +91,7 @@ export function loadAuthStore(): Record<string, OwnerAuthRecord> {
     }
   }
 
-  authCache = { ...DEFAULT_AUTH_STATE };
+  authCache = JSON.parse(JSON.stringify(DEFAULT_AUTH_STATE));
   saveAuthStore();
   return authCache!;
 }
@@ -118,35 +106,6 @@ function saveAuthStore() {
   }
 }
 
-export function loadGoogleUsers(): Record<string, GoogleAuthProfile> {
-  if (googleUsersCache) return googleUsersCache;
-  ensureDataDir();
-
-  if (fs.existsSync(GOOGLE_USERS_FILE)) {
-    try {
-      const raw = fs.readFileSync(GOOGLE_USERS_FILE, 'utf-8');
-      googleUsersCache = JSON.parse(raw);
-      return googleUsersCache!;
-    } catch (e) {
-      console.error('[AuthStore] Error loading Google users file:', e);
-    }
-  }
-
-  googleUsersCache = {};
-  saveGoogleUsers();
-  return googleUsersCache!;
-}
-
-function saveGoogleUsers() {
-  if (!googleUsersCache) return;
-  try {
-    ensureDataDir();
-    fs.writeFileSync(GOOGLE_USERS_FILE, JSON.stringify(googleUsersCache, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('[AuthStore] Error saving Google users store:', err);
-  }
-}
-
 export function isAuthorizedOwnerEmail(email?: string): boolean {
   if (!email) return false;
   return email.toLowerCase().trim() === BENILIN_EMAIL;
@@ -158,114 +117,114 @@ export function isAuthorizedUserEmail(email?: string): boolean {
   return lower === BENILIN_EMAIL || lower === SHANALOVE_EMAIL;
 }
 
-export function getOwnerRecord(email: string): OwnerAuthRecord | null {
-  if (!isAuthorizedUserEmail(email)) return null;
-  const store = loadAuthStore();
-  return store[email.toLowerCase().trim()] || null;
+export function hashPassword(password: string): { hash: string; salt: string } {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  return { hash, salt };
 }
 
-/**
- * Verifies and authenticates a user using their verified Google identity.
- * Step 3 Access Policy:
- * - Only benilin76@gmail.com (OWNER) and shanalove917@gmail.com (MEMBER) are authorized.
- * - All other accounts are strictly rejected with:
- *   "This Google account is not authorized to access Everly."
- * - Verified email requirement enforced.
- * - Role is strictly server-authoritative (never granted from client data).
- */
-export function authenticateWithGoogle(payload: {
-  googleSub: string;
+export function verifyPassword(password: string, hash: string, salt: string): boolean {
+  try {
+    const computedHash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(computedHash, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+export function authenticateUser(payload: {
   email: string;
-  name?: string;
-  avatarUrl?: string;
-  emailVerified?: boolean;
-}): { success: boolean; user?: GoogleAuthProfile; error?: string } {
-  const { googleSub, email, name, avatarUrl, emailVerified } = payload;
+  password?: string;
+}): { success: boolean; user?: OwnerAuthRecord; error?: string; needsSetup?: boolean } {
+  const { email, password } = payload;
 
-  if (!googleSub || typeof googleSub !== 'string' || googleSub.trim().length === 0) {
-    return { success: false, error: 'Missing verified Google subject identifier.' };
-  }
   if (!email || typeof email !== 'string' || !email.includes('@')) {
-    return { success: false, error: 'This Google account is not authorized to access Everly.' };
-  }
-
-  if (emailVerified === false) {
-    return { success: false, error: 'This Google account is not authorized to access Everly.' };
+    return { success: false, error: 'Invalid email address.' };
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const cleanSub = googleSub.trim();
+  if (!isAuthorizedUserEmail(cleanEmail)) {
+    return { success: false, error: 'This email address is not authorized to access Everly.' };
+  }
 
-  // Strict Policy Check: Reject any account other than benilin76@gmail.com or shanalove917@gmail.com
-  const authorizedAccount = AUTHORIZED_GOOGLE_ACCOUNTS[cleanEmail];
-  if (!authorizedAccount) {
-    return {
-      success: false,
-      error: 'This Google account is not authorized to access Everly.',
+  const store = loadAuthStore();
+  let record = store[cleanEmail];
+
+  if (!record) {
+    const meta = AUTHORIZED_USERS[cleanEmail];
+    record = {
+      email: cleanEmail,
+      name: meta.name,
+      role: meta.role,
+      isSetupComplete: false,
+      avatarInitials: meta.avatarInitials,
+      avatarColor: meta.avatarColor,
+      createdAt: new Date().toISOString(),
     };
-  }
-
-  // Server-authoritative role: OWNER for benilin76, MEMBER for shanalove917
-  const role: 'Owner' | 'Member' = authorizedAccount.role;
-  const displayName = name?.trim() || authorizedAccount.name;
-
-  const googleStore = loadGoogleUsers();
-  const now = new Date().toISOString();
-
-  // 1. Lookup existing profile by stable Google subject identifier
-  let profile = googleStore[cleanSub];
-
-  if (profile) {
-    profile.lastLoginAt = now;
-    profile.role = role;
-    profile.email = cleanEmail;
-    if (displayName) profile.name = displayName;
-    if (avatarUrl) profile.avatarUrl = avatarUrl;
-    saveGoogleUsers();
-    return { success: true, user: profile };
-  }
-
-  // 2. Create new profile for authorized Google account
-  profile = {
-    id: `ev_${cleanSub.slice(-8)}_${Date.now().toString(36)}`,
-    googleSub: cleanSub,
-    email: cleanEmail,
-    name: displayName,
-    role,
-    avatarInitials: authorizedAccount.avatarInitials,
-    avatarColor: authorizedAccount.avatarColor,
-    avatarUrl,
-    createdAt: now,
-    lastLoginAt: now,
-    linkedOwnerEmail: cleanEmail,
-  };
-
-  googleStore[cleanSub] = profile;
-  saveGoogleUsers();
-
-  // Link to existing store record
-  const ownerStore = loadAuthStore();
-  if (ownerStore[cleanEmail]) {
-    ownerStore[cleanEmail].linkedGoogleSub = cleanSub;
-    ownerStore[cleanEmail].googleLinkedAt = now;
-    ownerStore[cleanEmail].role = role;
-    ownerStore[cleanEmail].isSetupComplete = true;
+    store[cleanEmail] = record;
     saveAuthStore();
   }
 
-  return { success: true, user: profile };
-}
-
-export function getGoogleProfileBySub(googleSub: string): GoogleAuthProfile | null {
-  if (!googleSub) return null;
-  const store = loadGoogleUsers();
-  const profile = store[googleSub.trim()];
-  if (!profile) return null;
-
-  // Enforce access policy
-  if (!isAuthorizedUserEmail(profile.email)) {
-    return null;
+  // If password is not yet configured, signal that setup is needed
+  if (!record.isSetupComplete || !record.passwordHash || !record.passwordSalt) {
+    return { success: false, error: 'Password not configured. Please complete initial account setup.', needsSetup: true };
   }
 
-  return profile;
+  if (!password || typeof password !== 'string') {
+    return { success: false, error: 'Password is required.' };
+  }
+
+  const isValid = verifyPassword(password, record.passwordHash, record.passwordSalt);
+  if (!isValid) {
+    return { success: false, error: 'Incorrect password. Please try again.' };
+  }
+
+  record.lastLoginAt = new Date().toISOString();
+  saveAuthStore();
+
+  return { success: true, user: record };
+}
+
+export function setupUserPassword(payload: {
+  email: string;
+  password: string;
+  setupToken?: string;
+}): { success: boolean; error?: string; user?: OwnerAuthRecord } {
+  const { email, password, setupToken } = payload;
+
+  if (!email || !isAuthorizedUserEmail(email)) {
+    return { success: false, error: 'Unauthorized email address.' };
+  }
+
+  if (!password || typeof password !== 'string' || password.length < 6) {
+    return { success: false, error: 'Password must be at least 6 characters long.' };
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  const store = loadAuthStore();
+  let record = store[cleanEmail];
+
+  if (!record) {
+    const meta = AUTHORIZED_USERS[cleanEmail];
+    record = {
+      email: cleanEmail,
+      name: meta.name,
+      role: meta.role,
+      isSetupComplete: false,
+      avatarInitials: meta.avatarInitials,
+      avatarColor: meta.avatarColor,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const { hash, salt } = hashPassword(password);
+  record.passwordHash = hash;
+  record.passwordSalt = salt;
+  record.isSetupComplete = true;
+  record.lastLoginAt = new Date().toISOString();
+
+  store[cleanEmail] = record;
+  saveAuthStore();
+
+  return { success: true, user: record };
 }

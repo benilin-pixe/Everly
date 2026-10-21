@@ -23,10 +23,6 @@ service cloud.firestore {
         (request.auth.token.email.lower() == 'benilin76@gmail.com' || request.auth.token.email.lower() == 'shanalove917@gmail.com');
     }
 
-    function isOwnerAccount() {
-      return isAuthorizedAccount() && request.auth.token.email.lower() == 'benilin76@gmail.com';
-    }
-
     function isValidId(id) {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -37,7 +33,7 @@ service cloud.firestore {
         data.keys().hasOnly(['email', 'name', 'role', 'avatarInitials', 'avatarColor', 'avatarUrl', 'createdAt', 'lastLoginAt']) &&
         data.email is string && data.email.size() <= 100 &&
         data.name is string && data.name.size() <= 100 &&
-        data.role in ['Owner', 'Member'] &&
+        data.role == 'Owner' &&
         (!('avatarInitials' in data) || (data.avatarInitials is string && data.avatarInitials.size() <= 4)) &&
         (!('avatarColor' in data) || (data.avatarColor is string && data.avatarColor.size() <= 64)) &&
         (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 512)) &&
@@ -50,7 +46,6 @@ service cloud.firestore {
         data.id is string && isValidId(data.id) &&
         data.content is string && data.content.size() > 0 && data.content.size() <= 4000 &&
         data.authorEmail is string && data.authorEmail.size() <= 100 &&
-        data.authorEmail.lower() == request.auth.token.email.lower() &&
         data.authorName is string && data.authorName.size() <= 100 &&
         data.category in ['love-note', 'memory', 'date-idea', 'wishlist'] &&
         (!('colorScheme' in data) || (data.colorScheme in ['rose', 'amber', 'indigo', 'emerald'])) &&
@@ -66,7 +61,6 @@ service cloud.firestore {
         data.mimeType is string && data.mimeType.size() <= 128 &&
         (!('size' in data) || (data.size is number && data.size >= 0)) &&
         data.uploadedByEmail is string && data.uploadedByEmail.size() <= 100 &&
-        data.uploadedByEmail.lower() == request.auth.token.email.lower() &&
         (!('caption' in data) || (data.caption is string && data.caption.size() <= 1000)) &&
         (!('isFavorite' in data) || (data.isFavorite is bool)) &&
         data.uploadedAt is string;
@@ -77,7 +71,6 @@ service cloud.firestore {
         data.keys().hasOnly(['id', 'senderEmail', 'senderName', 'text', 'createdAt']) &&
         data.id is string && isValidId(data.id) &&
         data.senderEmail is string && data.senderEmail.size() <= 100 &&
-        data.senderEmail.lower() == request.auth.token.email.lower() &&
         data.senderName is string && data.senderName.size() <= 100 &&
         data.text is string && data.text.size() > 0 && data.text.size() <= 2000 &&
         data.createdAt is string;
@@ -87,70 +80,31 @@ service cloud.firestore {
 
     // 1. Users collection
     match /users/{userId} {
-      allow get: if isAuthorizedAccount() && (request.auth.uid == userId || isOwnerAccount());
-      allow list: if isAuthorizedAccount();
+      allow read: if isAuthorizedAccount();
       allow create: if isAuthorizedAccount() &&
         request.auth.uid == userId &&
-        isValidUser(request.resource.data) &&
-        (request.resource.data.role == (isOwnerAccount() ? 'Owner' : 'Member'));
+        isValidUser(request.resource.data);
       allow update: if isAuthorizedAccount() &&
-        (request.auth.uid == userId || isOwnerAccount()) &&
         isValidUser(request.resource.data) &&
         request.resource.data.email == resource.data.email &&
         request.resource.data.createdAt == resource.data.createdAt &&
-        // Prevent member from self-promoting to Owner
-        (!('role' in request.resource.data) || request.resource.data.role == resource.data.role || isOwnerAccount()) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'role', 'avatarInitials', 'avatarColor', 'avatarUrl', 'lastLoginAt']);
-      allow delete: if isOwnerAccount();
+      allow delete: if false;
     }
 
     // 2. Memory Notes collection
     match /memoryNotes/{noteId} {
-      allow get: if isAuthorizedAccount() && isValidId(noteId);
-      allow list: if isAuthorizedAccount();
-      allow create: if isAuthorizedAccount() &&
-        isValidId(noteId) &&
-        isValidMemoryNote(request.resource.data);
-      allow update: if isAuthorizedAccount() &&
-        isValidId(noteId) &&
-        isValidMemoryNote(request.resource.data) &&
-        request.resource.data.authorEmail == resource.data.authorEmail &&
-        request.resource.data.createdAt == resource.data.createdAt &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'category', 'colorScheme']);
-      allow delete: if isAuthorizedAccount() &&
-        isValidId(noteId) &&
-        (resource.data.authorEmail.lower() == request.auth.token.email.lower() || isOwnerAccount());
+      allow read, write: if isAuthorizedAccount();
     }
 
     // 3. Media Files collection
     match /mediaFiles/{fileId} {
-      allow get: if isAuthorizedAccount() && isValidId(fileId);
-      allow list: if isAuthorizedAccount();
-      allow create: if isAuthorizedAccount() &&
-        isValidId(fileId) &&
-        isValidMediaItem(request.resource.data);
-      allow update: if isAuthorizedAccount() &&
-        isValidId(fileId) &&
-        isValidMediaItem(request.resource.data) &&
-        request.resource.data.uploadedByEmail == resource.data.uploadedByEmail &&
-        request.resource.data.uploadedAt == resource.data.uploadedAt &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'caption', 'isFavorite']);
-      allow delete: if isAuthorizedAccount() &&
-        isValidId(fileId) &&
-        (resource.data.uploadedByEmail.lower() == request.auth.token.email.lower() || isOwnerAccount());
+      allow read, write: if isAuthorizedAccount();
     }
 
     // 4. Chat Messages collection
     match /chatMessages/{messageId} {
-      allow get: if isAuthorizedAccount() && isValidId(messageId);
-      allow list: if isAuthorizedAccount();
-      allow create: if isAuthorizedAccount() &&
-        isValidId(messageId) &&
-        isValidChatMessage(request.resource.data);
-      allow update: if false; // Messages are immutable
-      allow delete: if isAuthorizedAccount() &&
-        isValidId(messageId) &&
-        (resource.data.senderEmail.lower() == request.auth.token.email.lower() || isOwnerAccount());
+      allow read, write: if isAuthorizedAccount();
     }
   }
 }

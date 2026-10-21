@@ -1,18 +1,21 @@
 /**
  * Everly Cloud Storage Background Synchronization Service
- * Reconciles metadata between local Everly records and both Google Drive providers (Drive A & Drive B).
+ * Reconciles metadata between local Everly records and Google Drive providers (Drive A & Drive B).
  * Ensures file additions, deletions, and updates in the cloud are automatically reflected in the Everly UI.
+ * Gracefully handles token expiration, pause/resume states, and transient API failures.
  */
 
 import { UnifiedFileRecord, DriveProviderType, initEverlyCloudStorage } from './everlyStorageService';
 import { listDriveFiles } from './googleDriveService';
-import { PRIMARY_OWNER_EMAIL, SHARED_USER_EMAIL, getStoredAccessToken } from './authService';
+import { getStoredAccessToken, PRIMARY_OWNER_EMAIL } from './authService';
+import { launchGoogleSignIn, launchGoogleRedirectSignIn } from './firebaseAuth';
 
 export interface SyncStatus {
   isSyncing: boolean;
   lastSyncedAt: string | null;
   error?: string;
   filesSyncedCount?: number;
+  isDriveAAuthExpired?: boolean;
 }
 
 export type SyncListener = (
@@ -22,6 +25,24 @@ export type SyncListener = (
 
 const listeners = new Set<SyncListener>();
 const STORAGE_KEY_LAST_SYNC = 'everly_google_drive_last_sync_timestamp';
+const STORAGE_KEY_DRIVE_A_EXPIRED = 'everly_drive_a_auth_expired';
+
+export function isDriveAAuthExpired(): boolean {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem(STORAGE_KEY_DRIVE_A_EXPIRED) === 'true';
+    }
+  } catch {}
+  return false;
+}
+
+export function clearDriveAAuthExpired() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem(STORAGE_KEY_DRIVE_A_EXPIRED);
+    }
+  } catch {}
+}
 
 // Retrieve persisted last successful sync timestamp, or null
 function getPersistedLastSync(): string | null {
@@ -53,7 +74,27 @@ export function getSyncStatus(): SyncStatus {
   return {
     isSyncing,
     lastSyncedAt: getLastSuccessfulSyncTimestamp(),
+    isDriveAAuthExpired: isDriveAAuthExpired(),
   };
+}
+
+export function subscribeSync(listener: SyncListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function subscribeSyncStatus(listener: SyncListener): () => void {
+  return subscribeSync(listener);
+}
+
+function notifyListeners(files: UnifiedFileRecord[], status: SyncStatus) {
+  for (const listener of listeners) {
+    try {
+      listener(files, status);
+    } catch (e) {
+      console.warn('[Sync] Listener error:', e);
+    }
+  }
 }
 
 /**
@@ -62,14 +103,18 @@ export function getSyncStatus(): SyncStatus {
 export function startEverlyBackgroundSync(onFilesUpdated: (files: UnifiedFileRecord[]) => void) {
   if (syncIntervalId) return;
 
+  subscribeSync((files) => {
+    onFilesUpdated(files);
+  });
+
   // Run initial sync after 2 seconds
   setTimeout(() => {
-    runCloudSync(onFilesUpdated);
+    runCloudSync();
   }, 2000);
 
   // Set periodic sync
   syncIntervalId = setInterval(() => {
-    runCloudSync(onFilesUpdated);
+    runCloudSync();
   }, 45000);
 }
 
@@ -81,12 +126,37 @@ export function stopEverlyBackgroundSync() {
 }
 
 /**
+ * Force cloud synchronization immediately
+ */
+export async function forceCloudSync(onFilesUpdated?: (files: UnifiedFileRecord[]) => void): Promise<{ success: boolean; files: UnifiedFileRecord[]; error?: string }> {
+  clearDriveAAuthExpired();
+  try {
+    const files = await runCloudSync();
+    if (onFilesUpdated) onFilesUpdated(files);
+    return { success: true, files };
+  } catch (e: any) {
+    return { success: false, files: [], error: e?.message || 'Sync failed' };
+  }
+}
+
+/**
+ * Helper to open unified DB directly for deletion sync
+ */
+async function openEverlyDBDirect(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('EverlyUnifiedCloudStorageDB_v4', 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
  * Executes a full cloud synchronization pass across Drive A and Drive B.
  */
-export async function runCloudSync(onFilesUpdated?: (files: UnifiedFileRecord[]) => void): Promise<UnifiedFileRecord[]> {
+export async function runCloudSync(): Promise<UnifiedFileRecord[]> {
   if (isSyncing) return initEverlyCloudStorage();
   isSyncing = true;
-  notifyListeners([], { isSyncing: true, lastSyncedAt });
+  notifyListeners([], { isSyncing: true, lastSyncedAt, isDriveAAuthExpired: isDriveAAuthExpired() });
 
   try {
     const localFiles = await initEverlyCloudStorage();
@@ -94,8 +164,9 @@ export async function runCloudSync(onFilesUpdated?: (files: UnifiedFileRecord[])
 
     const cloudFilesMap = new Map<string, { provider: DriveProviderType; name: string; id: string; mimeType: string; size: number }>();
 
-    // 1. Fetch remote files from Drive A if token available
-    if (tokenA) {
+    // 1. Fetch remote files from Drive A if token available and auth is not expired
+    const authExpired = isDriveAAuthExpired();
+    if (tokenA && !authExpired) {
       try {
         const remoteA = await listDriveFiles(tokenA);
         for (const file of remoteA) {
@@ -109,8 +180,15 @@ export async function runCloudSync(onFilesUpdated?: (files: UnifiedFileRecord[])
             });
           }
         }
-      } catch (err) {
-        console.warn('Background sync warning: Could not fetch Drive A remote list', err);
+      } catch (err: any) {
+        if (err?.isAuthExpired || err?.status === 401 || err?.message?.includes('expired') || err?.message?.includes('authorization')) {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            localStorage.setItem(STORAGE_KEY_DRIVE_A_EXPIRED, 'true');
+          }
+          console.warn('[Drive Sync] Google Drive authorization token has expired. Drive A sync paused until reconnected.');
+        } else {
+          console.warn('Background sync warning: Could not fetch Drive A remote list', err);
+        }
       }
     }
 
@@ -120,7 +198,7 @@ export async function runCloudSync(onFilesUpdated?: (files: UnifiedFileRecord[])
 
     // Check for cloud deletions (files present locally as non-mock but missing in cloud)
     const activeLocal = reconciled.filter((f) => {
-      if (f.driveProvider === 'DRIVE_A' && tokenA && !f.driveFileId.startsWith('1drive_')) {
+      if (f.driveProvider === 'DRIVE_A' && tokenA && !authExpired && !f.driveFileId.startsWith('1drive_')) {
         const existsInCloud = cloudFilesMap.has(`DRIVE_A:${f.driveFileId}`);
         if (!existsInCloud) {
           changesDetected = true;
@@ -133,7 +211,7 @@ export async function runCloudSync(onFilesUpdated?: (files: UnifiedFileRecord[])
     if (changesDetected || activeLocal.length !== localFiles.length) {
       // Save updated active local to IndexedDB
       try {
-        const db = await openUnifiedDBDirect();
+        const db = await openEverlyDBDirect();
         const tx = db.transaction('unified_files', 'readwrite');
         const store = tx.objectStore('unified_files');
         store.clear();
@@ -151,70 +229,65 @@ export async function runCloudSync(onFilesUpdated?: (files: UnifiedFileRecord[])
       isSyncing: false,
       lastSyncedAt: nowIso,
       filesSyncedCount: activeLocal.length,
+      isDriveAAuthExpired: isDriveAAuthExpired(),
     });
-    onFilesUpdated?.(activeLocal);
+
     return activeLocal;
-  } catch (err: any) {
+  } catch (e: any) {
     isSyncing = false;
     notifyListeners([], {
       isSyncing: false,
-      lastSyncedAt: getLastSuccessfulSyncTimestamp(),
-      error: err?.message || 'Sync failed',
+      lastSyncedAt,
+      error: e?.message || 'Sync failed',
+      isDriveAAuthExpired: isDriveAAuthExpired(),
     });
     return initEverlyCloudStorage();
   }
 }
 
 /**
- * Manually forces an immediate cloud synchronization pass with Google Drive.
- */
-export async function forceCloudSync(
-  onFilesUpdated?: (files: UnifiedFileRecord[]) => void
-): Promise<{ success: boolean; files: UnifiedFileRecord[]; timestamp: string; error?: string }> {
+   * Reconnects Google Drive A by launching Google OAuth authorization for primary owner (benilin76@gmail.com),
+   * obtaining fresh token, clearing expired flag, and resuming background sync.
+   */
+export async function reconnectDriveA(): Promise<{ success: boolean; error?: string }> {
   try {
-    const syncedFiles = await runCloudSync(onFilesUpdated);
-    const ts = getLastSuccessfulSyncTimestamp() || new Date().toISOString();
-    return {
-      success: true,
-      files: syncedFiles,
-      timestamp: ts,
-    };
+    const googleResult = await launchGoogleSignIn();
+    if (!googleResult || !googleResult.email) {
+      return { success: false, error: 'Google sign-in was cancelled or did not return an account.' };
+    }
+
+    if (googleResult.email.toLowerCase().trim() !== PRIMARY_OWNER_EMAIL.toLowerCase()) {
+      return {
+        success: false,
+        error: `Incorrect Google account selected (${googleResult.email}). Please sign in with primary owner account: ${PRIMARY_OWNER_EMAIL}`,
+      };
+    }
+
+    if (googleResult.idToken && typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('everly_password_token_v6', googleResult.idToken);
+    }
+
+    clearDriveAAuthExpired();
+
+    const syncResult = await forceCloudSync();
+    if (!syncResult.success) {
+      return { success: false, error: syncResult.error || 'Drive A reconnected, but cloud sync test failed.' };
+    }
+
+    return { success: true };
   } catch (err: any) {
-    return {
-      success: false,
-      files: [],
-      timestamp: getLastSuccessfulSyncTimestamp() || new Date().toISOString(),
-      error: err?.message || 'Force sync failed',
-    };
+    if (err?.isCancelled || err?.code === 'auth/popup-closed-by-user') {
+      return { success: false, error: 'Google sign-in window was closed.' };
+    }
+    if (err?.isPopupBlocked) {
+      try {
+        await launchGoogleRedirectSignIn();
+        return { success: false, error: 'Redirecting to Google sign-in...' };
+      } catch (redirectErr: any) {
+        return { success: false, error: redirectErr?.message || 'Popup blocked and redirect failed.' };
+      }
+    }
+    return { success: false, error: err?.message || 'Failed to reconnect Google Drive A.' };
   }
 }
 
-function openUnifiedDBDirect(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('EverlyUnifiedCloudStorageDB_v4', 1);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-export function subscribeSyncStatus(listener: SyncListener): () => void {
-  listeners.add(listener);
-  // Emit current status immediately
-  try {
-    listener([], getSyncStatus());
-  } catch {}
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function notifyListeners(
-  files: UnifiedFileRecord[],
-  status: SyncStatus
-) {
-  listeners.forEach((fn) => {
-    try {
-      fn(files, status);
-    } catch {}
-  });
-}

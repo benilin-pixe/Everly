@@ -1,11 +1,4 @@
 import { AuthorizedUser, UserRole } from '../types';
-import {
-  launchGoogleSignIn,
-  launchGoogleRedirectSignIn,
-  checkRedirectSignInResult,
-  signOutFromGoogle,
-  GoogleAuthResult,
-} from './firebaseAuth';
 
 export const PRIMARY_OWNER_EMAIL = 'benilin76@gmail.com';
 export const SHARED_USER_EMAIL = 'shanalove917@gmail.com';
@@ -25,83 +18,87 @@ export const AUTHORIZED_USERS: Record<string, { name: string; role: UserRole; av
   },
 };
 
-const AUTH_STORAGE_KEY = 'everly_google_user_v5';
-const TOKEN_STORAGE_KEY = 'everly_google_access_token_v5';
-const ACCESS_DENIED_STORAGE_KEY = 'everly_denied_attempt_v5';
-
-// OAuth Client ID from Google Cloud / Firebase applet config
-export const GOOGLE_OAUTH_CLIENT_ID = '370113877663-fgqpe37aca3o8227ieo3cnrs0ve1js1g.apps.googleusercontent.com';
+const AUTH_STORAGE_KEY = 'everly_password_user_v6';
+const TOKEN_STORAGE_KEY = 'everly_password_token_v6';
+const ACCESS_DENIED_STORAGE_KEY = 'everly_denied_attempt_v6';
 
 /**
- * Verifies a Google sign-in identity with the backend and returns the Everly profile
+ * Authenticates with email and password against Everly backend
  */
-export async function authenticateWithGoogleBackend(payload: GoogleAuthResult): Promise<AuthorizedUser> {
-  const res = await fetch('/api/auth/google', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      googleSub: payload.googleSub,
-      email: payload.email,
-      name: payload.name,
-      avatarUrl: payload.avatarUrl,
-      idToken: payload.idToken,
-      emailVerified: payload.emailVerified,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const errorMsg = err.error || 'This Google account is not authorized to access Everly.';
-    recordDeniedAttempt(payload.email || 'Unknown Account');
-    const authErr = new Error(errorMsg);
-    (authErr as any).attemptedEmail = payload.email;
-    throw authErr;
+export async function authenticateWithPassword(email: string, password: string): Promise<AuthorizedUser> {
+  const cleanEmail = email.toLowerCase().trim();
+  if (!isEmailAuthorized(cleanEmail)) {
+    recordDeniedAttempt(cleanEmail);
+    throw new Error('This email address is not authorized to access Everly.');
   }
 
-  const data = await res.json();
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: cleanEmail, password }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (data.needsSetup) {
+      const setupErr = new Error(data.error || 'Password setup required.');
+      (setupErr as any).needsSetup = true;
+      (setupErr as any).email = cleanEmail;
+      throw setupErr;
+    }
+    throw new Error(data.error || 'Invalid email or password.');
+  }
+
+  const userRecord = data.user;
   const user: AuthorizedUser = {
-    email: data.user.email,
-    name: data.user.name,
-    role: data.user.role,
-    avatarInitials: data.user.avatarInitials,
-    avatarColor: data.user.avatarColor,
-    picture: data.user.avatarUrl,
-    googleSub: data.user.googleSub,
-    accessToken: payload.accessToken,
+    email: userRecord.email,
+    name: userRecord.name,
+    role: userRecord.role,
+    avatarInitials: userRecord.avatarInitials,
+    avatarColor: userRecord.avatarColor,
+    googleSub: userRecord.email,
   };
 
-  setStoredUser(user, payload.accessToken);
+  setStoredUser(user, 'session_token_' + Date.now());
   clearDeniedAttempt();
   return user;
 }
 
 /**
- * Checks for a pending redirect sign-in result on page load
+ * Sets up initial password or resets password for an authorized account
  */
-export async function handleRedirectAuthIfPresent(): Promise<AuthorizedUser | null> {
-  const result = await checkRedirectSignInResult();
-  if (result) {
-    return await authenticateWithGoogleBackend(result);
+export async function setupUserPasswordApi(email: string, password: string): Promise<AuthorizedUser> {
+  const cleanEmail = email.toLowerCase().trim();
+  if (!isEmailAuthorized(cleanEmail)) {
+    throw new Error('Unauthorized email address.');
   }
-  return null;
-}
 
-/**
- * Performs full Google sign-in flow via popup:
- * 1. Launches official Google OAuth popup (Firebase Auth)
- * 2. Transmits verified Google identity to backend
- * 3. Saves session and returns authenticated user
- */
-export async function signInWithGoogleFlow(): Promise<AuthorizedUser> {
-  const googleResult = await launchGoogleSignIn();
-  return await authenticateWithGoogleBackend(googleResult);
-}
+  const res = await fetch('/api/auth/setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: cleanEmail, password }),
+  });
 
-/**
- * Initiates Google OAuth redirect flow
- */
-export async function signInWithGoogleRedirectFlow(): Promise<void> {
-  await launchGoogleRedirectSignIn();
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(data.error || 'Password setup failed.');
+  }
+
+  const userRecord = data.user;
+  const user: AuthorizedUser = {
+    email: userRecord.email,
+    name: userRecord.name,
+    role: userRecord.role,
+    avatarInitials: userRecord.avatarInitials,
+    avatarColor: userRecord.avatarColor,
+    googleSub: userRecord.email,
+  };
+
+  setStoredUser(user, 'session_token_' + Date.now());
+  clearDeniedAttempt();
+  return user;
 }
 
 export const isEmailAuthorized = (email: string): boolean => {
@@ -163,7 +160,7 @@ export const recordDeniedAttempt = (attemptedEmail: string) => {
     JSON.stringify({
       email: attemptedEmail,
       timestamp: new Date().toISOString(),
-      message: 'This Google account is not authorized to access Everly.',
+      message: 'This email address is not authorized to access Everly.',
     })
   );
 };
@@ -182,7 +179,6 @@ export const clearDeniedAttempt = () => {
 };
 
 export async function signOutEverly(): Promise<void> {
-  await signOutFromGoogle();
   setStoredUser(null);
   clearDeniedAttempt();
 }

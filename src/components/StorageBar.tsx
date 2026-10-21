@@ -18,6 +18,7 @@ import { StorageStats, AuthorizedUser } from '../types';
 import { formatBytes } from '../services/storageService';
 import { PRIMARY_OWNER_EMAIL, SHARED_USER_EMAIL } from '../services/authService';
 import { DriveAccountStatus } from '../services/everlyStorageService';
+import { reconnectDriveA, isDriveAAuthExpired } from '../services/everlySyncService';
 import { BackupStatusWidget } from './BackupStatusWidget';
 
 interface StorageModalProps {
@@ -48,6 +49,22 @@ export const StorageModal: React.FC<StorageModalProps> = ({
 
   if (!isOpen) return null;
 
+  const [isReconnectingA, setIsReconnectingA] = useState(false);
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
+  const driveAExpired = isDriveAAuthExpired();
+
+  const handleReconnectDriveA = async () => {
+    setIsReconnectingA(true);
+    setReconnectError(null);
+    const res = await reconnectDriveA();
+    setIsReconnectingA(false);
+    if (!res.success) {
+      setReconnectError(res.error || 'Failed to reconnect Google Drive A.');
+    } else {
+      onRefreshStorage?.();
+    }
+  };
+
   const usedPercent = Math.min(100, Number(((stats.usedBytes / stats.totalBytes) * 100).toFixed(1)));
   const photosPercent = Number(((stats.photosBytes / stats.totalBytes) * 100).toFixed(2));
   const videosPercent = Number(((stats.videosBytes / stats.totalBytes) * 100).toFixed(2));
@@ -66,7 +83,7 @@ export const StorageModal: React.FC<StorageModalProps> = ({
     email: PRIMARY_OWNER_EMAIL,
     name: 'Ben Lin',
     role: 'Owner' as const,
-    isConnected: true,
+    isConnected: !driveAExpired,
     usedBytes: stats.usedBytes / 2,
     totalBytes: 15 * 1024 * 1024 * 1024,
     freeBytes: 15 * 1024 * 1024 * 1024 - stats.usedBytes / 2,
@@ -75,8 +92,8 @@ export const StorageModal: React.FC<StorageModalProps> = ({
 
   const driveB = stats.driveBStatus || {
     email: SHARED_USER_EMAIL,
-    name: 'Ben Storage',
-    role: 'Storage Partner' as const,
+    name: 'Shana Love',
+    role: 'Owner' as const,
     isConnected: true,
     usedBytes: stats.usedBytes / 2,
     totalBytes: 15 * 1024 * 1024 * 1024,
@@ -84,7 +101,7 @@ export const StorageModal: React.FC<StorageModalProps> = ({
     itemCount: Math.floor(stats.itemCount / 2),
   };
 
-  const isAnyDisconnected = !driveA.isConnected || !driveB.isConnected;
+  const isAnyDisconnected = !driveA.isConnected || !driveB.isConnected || driveAExpired;
 
   return (
     <div
@@ -124,11 +141,26 @@ export const StorageModal: React.FC<StorageModalProps> = ({
           </button>
         </div>
 
-        {/* Partial Disconnect Warning Banner */}
-        {isAnyDisconnected && (
-          <div className="mt-4 p-3 rounded-2xl bg-amber-950/80 border border-amber-500/40 text-amber-200 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
-            <span>Some Everly storage is temporarily unavailable because one storage account is disconnected.</span>
+        {/* Partial Disconnect / Drive A Auth Expired Warning Banner */}
+        {(isAnyDisconnected || driveAExpired) && (
+          <div className="mt-4 p-4 rounded-2xl bg-rose-950/80 border border-rose-500/50 text-rose-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+              <div>
+                <span className="font-bold block text-white">Google Drive A Authorization Expired</span>
+                <span className="text-[11px] text-rose-300">
+                  {reconnectError || 'Drive A sync is paused because authorization has expired or was revoked. Reconnect to resume synchronization.'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={handleReconnectDriveA}
+              disabled={isReconnectingA}
+              className="px-4 py-2 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isReconnectingA ? 'animate-spin' : ''}`} />
+              <span>{isReconnectingA ? 'Connecting...' : 'Reconnect Drive A'}</span>
+            </button>
           </div>
         )}
 
@@ -221,19 +253,29 @@ export const StorageModal: React.FC<StorageModalProps> = ({
                     <div className="text-[11px] text-slate-400">Primary Cloud Storage</div>
                   </div>
                 </div>
-                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${driveA.isConnected ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`}>
-                  {driveA.isConnected ? 'CONNECTED ✓' : 'DISCONNECTED'}
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${driveA.isConnected && !driveAExpired ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`}>
+                  {driveAExpired ? 'EXPIRED ⚠️' : driveA.isConnected ? 'CONNECTED ✓' : 'DISCONNECTED'}
                 </span>
               </div>
 
               <div className="text-[11px] text-slate-400 flex justify-between pt-1 border-t border-white/5">
                 <span>{formatBytes(driveA.usedBytes)} used ({driveA.itemCount} files)</span>
-                <button
-                  onClick={() => onToggleDriveConnection?.('DRIVE_A', !driveA.isConnected)}
-                  className="text-rose-400 hover:underline text-[10px] cursor-pointer"
-                >
-                  {driveA.isConnected ? 'Disconnect' : 'Reconnect'}
-                </button>
+                {driveAExpired ? (
+                  <button
+                    onClick={handleReconnectDriveA}
+                    disabled={isReconnectingA}
+                    className="text-rose-400 hover:underline text-[10px] font-bold cursor-pointer"
+                  >
+                    {isReconnectingA ? 'Reconnecting...' : 'Reconnect Drive A'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onToggleDriveConnection?.('DRIVE_A', !driveA.isConnected)}
+                    className="text-rose-400 hover:underline text-[10px] cursor-pointer"
+                  >
+                    {driveA.isConnected ? 'Disconnect' : 'Reconnect'}
+                  </button>
+                )}
               </div>
             </div>
 

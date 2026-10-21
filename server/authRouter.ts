@@ -1,14 +1,14 @@
 import express, { Request, Response } from 'express';
 import * as authStore from './authStore';
 
-// In-memory rate limiter for auth endpoints (25 attempts per minute per IP)
+// In-memory rate limiter for auth endpoints (20 attempts per minute per IP)
 interface RateLimitRecord {
   count: number;
   resetAt: number;
 }
 const rateLimitMap = new Map<string, RateLimitRecord>();
 
-function checkRateLimit(ip: string, limit = 25, windowMs = 60000): boolean {
+function checkRateLimit(ip: string, limit = 20, windowMs = 60000): boolean {
   const now = Date.now();
   const record = rateLimitMap.get(ip);
   if (!record || now > record.resetAt) {
@@ -28,82 +28,121 @@ export function createAuthRouter() {
   // Authentication configuration and provider status
   router.get('/config', (_req: Request, res: Response) => {
     res.json({
-      authProvider: 'google',
-      supportedProviders: ['google'],
-      googleAuthOnly: true,
-      passwordsEnabled: false,
+      authProvider: 'password',
+      supportedProviders: ['password'],
+      googleAuthOnly: false,
+      passwordsEnabled: true,
     });
   });
 
-  // Verify and authenticate Google identity
-  router.post('/google', (req: Request, res: Response) => {
+  // Check account status & setup requirement
+  router.get('/status', (_req: Request, res: Response) => {
+    const store = authStore.loadAuthStore();
+    const benilinComplete = store[authStore.BENILIN_EMAIL]?.isSetupComplete || false;
+    const shanaComplete = store[authStore.SHANALOVE_EMAIL]?.isSetupComplete || false;
+
+    res.json({
+      authProvider: 'password',
+      isSetupComplete: benilinComplete && shanaComplete,
+      benilinSetupComplete: benilinComplete,
+      shanaSetupComplete: shanaComplete,
+      passwordsEnabled: true,
+    });
+  });
+
+  // Secure Password Login
+  router.post('/login', (req: Request, res: Response) => {
     const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
-    if (!checkRateLimit(`google_auth_${clientIp}`, 30, 60000)) {
-      res.status(429).json({ error: 'Too many authentication attempts. Please wait a moment and try again.' });
+    if (!checkRateLimit(`login_${clientIp}`, 20, 60000)) {
+      res.status(429).json({ error: 'Too many login attempts. Please wait a moment and try again.' });
       return;
     }
 
-    const { googleSub, email, name, avatarUrl } = req.body;
-
-    if (!googleSub || typeof googleSub !== 'string' || googleSub.trim().length === 0) {
-      res.status(400).json({ error: 'Missing or invalid Google subject identifier (googleSub).' });
-      return;
-    }
+    const { email, password } = req.body;
 
     if (!email || typeof email !== 'string' || !email.includes('@')) {
-      res.status(400).json({ error: 'Missing or invalid verified Google email.' });
+      res.status(400).json({ error: 'Missing or invalid email address.' });
       return;
     }
 
-    const result = authStore.authenticateWithGoogle({
-      googleSub: googleSub.trim(),
+    if (!password || typeof password !== 'string') {
+      res.status(400).json({ error: 'Missing password.' });
+      return;
+    }
+
+    const result = authStore.authenticateUser({
       email: email.trim(),
-      name,
-      avatarUrl,
-      emailVerified: req.body.emailVerified,
+      password,
     });
 
-    if (!result.success || !result.user) {
-      res.status(403).json({ error: result.error || 'This Google account is not authorized to access Everly.' });
+    if (!result.success) {
+      if (result.needsSetup) {
+        res.status(403).json({
+          error: 'Password not configured for this account. Please complete initial setup.',
+          needsSetup: true,
+          email: email.trim(),
+        });
+        return;
+      }
+      res.status(401).json({ error: result.error || 'Authentication failed.' });
       return;
     }
 
     res.json({ success: true, user: result.user });
   });
 
-  // Retrieve existing authenticated Google profile
-  router.get('/profile/:googleSub', (req: Request, res: Response) => {
-    const { googleSub } = req.params;
-    if (!googleSub) {
-      res.status(400).json({ error: 'Missing googleSub parameter.' });
+  // Initial Password Setup / Reset
+  router.post('/setup', (req: Request, res: Response) => {
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`setup_${clientIp}`, 10, 60000)) {
+      res.status(429).json({ error: 'Too many setup attempts. Please wait a moment and try again.' });
       return;
     }
 
-    const profile = authStore.getGoogleProfileBySub(googleSub);
-    if (!profile) {
-      res.status(404).json({ error: 'User profile not found.' });
+    const { email, password } = req.body;
+
+    if (!email || typeof email !== 'string' || !authStore.isAuthorizedUserEmail(email)) {
+      res.status(400).json({ error: 'Unauthorized email address.' });
       return;
     }
 
-    res.json({ success: true, user: profile });
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+      return;
+    }
+
+    const result = authStore.setupUserPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.error || 'Password setup failed.' });
+      return;
+    }
+
+    res.json({ success: true, user: result.user });
   });
 
-  // Retired legacy password and public registration routes
-  const retiredAuthHandler = (_req: Request, res: Response) => {
-    res.status(410).json({
-      error: 'Everly has transitioned to Google Sign-In only. Passwords and separate account creation have been permanently retired.',
-    });
-  };
+  router.post('/reset', (req: Request, res: Response) => {
+    // Delegates to setup route for authorized password reset
+    const { email, password } = req.body;
+    if (!email || !authStore.isAuthorizedUserEmail(email)) {
+      res.status(403).json({ error: 'Unauthorized email address.' });
+      return;
+    }
+    const result = authStore.setupUserPassword({ email, password });
+    if (!result.success) {
+      res.status(400).json({ error: result.error || 'Password reset failed.' });
+      return;
+    }
+    res.json({ success: true, user: result.user });
+  });
 
-  router.post('/register', retiredAuthHandler);
-  router.post('/login', retiredAuthHandler);
-  router.post('/setup', retiredAuthHandler);
-  router.post('/reset', retiredAuthHandler);
-  router.post('/status', (_req: Request, res: Response) => {
-    res.json({
-      authProvider: 'google',
-      isSetupComplete: true,
-      passwordsEnabled: false,
+  // Permanently retired public registration
+  router.post('/register', (_req: Request, res: Response) => {
+    res.status(410).json({
+      error: 'Public registration is permanently disabled. Everly is a private couple vault for authorized users only.',
     });
   });
 
