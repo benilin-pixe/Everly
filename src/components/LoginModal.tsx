@@ -9,6 +9,8 @@ import {
   ArrowRight,
   KeyRound,
   CheckCircle2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   authenticateWithPassword,
@@ -29,12 +31,14 @@ interface LoginModalProps {
 export const LoginModal: React.FC<LoginModalProps> = ({
   onLoginSuccess,
   initialEmail = '',
-  onCancel,
 }) => {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSetupMode, setIsSetupMode] = useState(false);
+  const [isResetMode, setIsResetMode] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
@@ -64,7 +68,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setIsLoading(true);
 
     try {
-      if (isSetupMode) {
+      if (isSetupMode || isResetMode) {
         if (password.length < 6) {
           setErrorNotice('Password must be at least 6 characters long.');
           setIsLoading(false);
@@ -77,7 +81,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         }
 
         const user = await setupUserPasswordApi(cleanEmail, password);
-        setSuccessNotice('Password successfully configured! Logging you in...');
+        setSuccessNotice(isResetMode ? 'Password successfully reset! Logging you in...' : 'Password successfully configured! Logging you in...');
         setTimeout(() => {
           onLoginSuccess(user);
         }, 800);
@@ -213,22 +217,30 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              {isSetupMode ? 'Create New Password' : 'Password'}
+              {isSetupMode || isResetMode ? 'Create New Password' : 'Password'}
             </label>
             <div className="relative">
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••••••"
-                className="w-full bg-[#080b11] border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
+                className="w-full bg-[#080b11] border border-white/10 rounded-xl py-3 pl-10 pr-10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 
-          {isSetupMode && (
+          {(isSetupMode || isResetMode) && (
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                 Confirm Password
@@ -236,13 +248,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <div className="relative">
                 <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
-                  type="password"
+                  type={showConfirmPassword ? 'text' : 'password'}
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full bg-[#080b11] border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
+                  className="w-full bg-[#080b11] border border-white/10 rounded-xl py-3 pl-10 pr-10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                  title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
           )}
@@ -259,25 +279,44 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </div>
             ) : (
               <>
-                <span>{isSetupMode ? 'Save Password & Log In' : 'Log In'}</span>
+                <span>{isSetupMode || isResetMode ? 'Save Password & Log In' : 'Log In'}</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
         </form>
 
-        {/* Toggle setup mode */}
-        <div className="mt-4 text-center">
+        {/* Toggle setup / reset mode */}
+        <div className="mt-4 flex items-center justify-between text-xs">
           <button
             type="button"
             onClick={() => {
-              setIsSetupMode(!isSetupMode);
+              if (isSetupMode || isResetMode) {
+                setIsSetupMode(false);
+                setIsResetMode(false);
+              } else {
+                setIsSetupMode(true);
+              }
               setErrorNotice(null);
             }}
-            className="text-xs text-rose-300/80 hover:text-rose-300 underline cursor-pointer"
+            className="text-rose-300/80 hover:text-rose-300 underline cursor-pointer"
           >
-            {isSetupMode ? 'Already configured? Back to Log In' : 'First time setup / Reset password'}
+            {isSetupMode || isResetMode ? 'Already configured? Back to Log In' : 'First time setup'}
           </button>
+
+          {!isSetupMode && !isResetMode && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsResetMode(true);
+                setIsSetupMode(false);
+                setErrorNotice(null);
+              }}
+              className="text-slate-400 hover:text-slate-200 underline cursor-pointer"
+            >
+              Reset Password
+            </button>
+          )}
         </div>
 
         {/* Security & Access Policy Badges */}

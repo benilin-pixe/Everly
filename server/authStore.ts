@@ -194,10 +194,10 @@ export function setupUserPassword(payload: {
   password: string;
   setupToken?: string;
 }): { success: boolean; error?: string; user?: OwnerAuthRecord } {
-  const { email, password, setupToken } = payload;
+  const { email, password } = payload;
 
   if (!email || !isAuthorizedUserEmail(email)) {
-    return { success: false, error: 'Unauthorized email address.' };
+    return { success: false, error: 'Unauthorized email address. Only benilin76@gmail.com and shanalove917@gmail.com are permitted.' };
   }
 
   if (!password || typeof password !== 'string' || password.length < 6) {
@@ -205,30 +205,35 @@ export function setupUserPassword(payload: {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const store = loadAuthStore();
-  let record = store[cleanEmail];
+  try {
+    const store = loadAuthStore();
+    let record = store[cleanEmail];
 
-  if (!record) {
-    const meta = AUTHORIZED_USERS[cleanEmail];
-    record = {
-      email: cleanEmail,
-      name: meta.name,
-      role: meta.role,
-      isSetupComplete: false,
-      avatarInitials: meta.avatarInitials,
-      avatarColor: meta.avatarColor,
-      createdAt: new Date().toISOString(),
-    };
+    if (!record) {
+      const meta = AUTHORIZED_USERS[cleanEmail];
+      record = {
+        email: cleanEmail,
+        name: meta?.name || 'Owner',
+        role: meta?.role || 'Owner',
+        isSetupComplete: false,
+        avatarInitials: meta?.avatarInitials || 'EV',
+        avatarColor: meta?.avatarColor || 'from-rose-500 to-amber-600',
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    const { hash, salt } = hashPassword(password);
+    record.passwordHash = hash;
+    record.passwordSalt = salt;
+    record.isSetupComplete = true;
+    record.lastLoginAt = new Date().toISOString();
+
+    store[cleanEmail] = record;
+    saveAuthStore();
+
+    return { success: true, user: record };
+  } catch (err: any) {
+    console.error('[AuthStore] setupUserPassword error:', err?.message || err);
+    return { success: false, error: err?.message || 'Password setup failed due to an internal server error.' };
   }
-
-  const { hash, salt } = hashPassword(password);
-  record.passwordHash = hash;
-  record.passwordSalt = salt;
-  record.isSetupComplete = true;
-  record.lastLoginAt = new Date().toISOString();
-
-  store[cleanEmail] = record;
-  saveAuthStore();
-
-  return { success: true, user: record };
 }
