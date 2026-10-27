@@ -1,6 +1,6 @@
 {
-  "name": "Shared Couple Portal",
-  "description": "Private couple media vault and file streaming portal powered by Google Drive.",
+  "name": "Everly — A Space for Two Friends",
+  "description": "Everly is a personal space for two friends to keep their shared memories and meaningful moments together. It celebrates friendship, laughter, support and the little things worth remembering.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

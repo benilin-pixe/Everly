@@ -33,6 +33,7 @@ interface StorageModalProps {
   onRefreshStorage?: () => void;
   onToggleDriveConnection?: (provider: 'DRIVE_A' | 'DRIVE_B', isConnected: boolean) => void;
   onOpenStorageServers?: () => void;
+  onSwitchAccount?: (targetEmail: string) => void;
 }
 
 export const StorageModal: React.FC<StorageModalProps> = ({
@@ -44,13 +45,14 @@ export const StorageModal: React.FC<StorageModalProps> = ({
   onRefreshStorage,
   onToggleDriveConnection,
   onOpenStorageServers,
+  onSwitchAccount,
 }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isReconnectingA, setIsReconnectingA] = useState(false);
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const [isReconnectingA, setIsReconnectingA] = useState(false);
-  const [reconnectError, setReconnectError] = useState<string | null>(null);
   const driveAExpired = isDriveAAuthExpired();
 
   const handleReconnectDriveA = async () => {
@@ -309,30 +311,54 @@ export const StorageModal: React.FC<StorageModalProps> = ({
           </div>
         </div>
 
-        {/* Everly Members Section */}
+        {/* Everly Owners Section */}
         <div className="mt-5 space-y-3">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
-            Everly Members
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+            <span>Authorized Co-Owners</span>
+            <span className="text-[10px] text-slate-400 font-normal">Equal Administrative Permissions</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3.5 rounded-2xl bg-[#090e1a] border border-white/10 flex items-center justify-between">
+            <div className={`p-3.5 rounded-2xl bg-[#090e1a] border flex items-center justify-between ${
+              currentUser.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase()
+                ? 'border-rose-500/40 bg-rose-950/10'
+                : 'border-white/10'
+            }`}>
               <div className="flex items-center gap-2.5">
                 <div className="w-7 h-7 rounded-xl bg-rose-500/20 text-rose-400 font-bold text-xs flex items-center justify-center">
                   BL
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-white">Ben Lin</div>
+                  <div className="text-xs font-bold text-white">BeniLin</div>
                   <div className="text-[11px] font-mono text-slate-400">{PRIMARY_OWNER_EMAIL}</div>
                 </div>
               </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                OWNER
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  OWNER
+                </span>
+                {currentUser.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase() ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">YOU</span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onSwitchAccount?.(PRIMARY_OWNER_EMAIL);
+                    }}
+                    className="px-2 py-1 bg-white/10 hover:bg-rose-600 text-white rounded-lg text-[10px] font-semibold transition-colors cursor-pointer"
+                  >
+                    Switch
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-[#090e1a] border border-white/10 flex items-center justify-between">
+            <div className={`p-3.5 rounded-2xl bg-[#090e1a] border flex items-center justify-between ${
+              currentUser.email.toLowerCase() === SHARED_USER_EMAIL.toLowerCase()
+                ? 'border-rose-500/40 bg-rose-950/10'
+                : 'border-white/10'
+            }`}>
               <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-xl bg-rose-500/20 text-rose-400 font-bold text-xs flex items-center justify-center">
+                <div className="w-7 h-7 rounded-xl bg-pink-500/20 text-pink-400 font-bold text-xs flex items-center justify-center">
                   SL
                 </div>
                 <div>
@@ -340,9 +366,24 @@ export const StorageModal: React.FC<StorageModalProps> = ({
                   <div className="text-[11px] font-mono text-slate-400">{SHARED_USER_EMAIL}</div>
                 </div>
               </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                OWNER
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  OWNER
+                </span>
+                {currentUser.email.toLowerCase() === SHARED_USER_EMAIL.toLowerCase() ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">YOU</span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onSwitchAccount?.(SHARED_USER_EMAIL);
+                    }}
+                    className="px-2 py-1 bg-white/10 hover:bg-rose-600 text-white rounded-lg text-[10px] font-semibold transition-colors cursor-pointer"
+                  >
+                    Switch
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

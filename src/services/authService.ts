@@ -12,7 +12,7 @@ export const AUTHORIZED_USERS: Record<string, { name: string; role: UserRole; av
   },
   [SHARED_USER_EMAIL]: {
     name: 'Shana Love',
-    role: 'Member',
+    role: 'Owner',
     avatarInitials: 'SL',
     avatarColor: 'from-pink-500 to-rose-600',
   },
@@ -110,8 +110,7 @@ export const isEmailAuthorized = (email: string): boolean => {
 export const getUserRole = (email: string): UserRole => {
   if (!email) return 'Member';
   const normalized = email.trim().toLowerCase();
-  if (normalized === PRIMARY_OWNER_EMAIL) return 'Owner';
-  if (normalized === SHARED_USER_EMAIL) return 'Member';
+  if (normalized === PRIMARY_OWNER_EMAIL || normalized === SHARED_USER_EMAIL) return 'Owner';
   return 'Member';
 };
 
@@ -181,6 +180,10 @@ export const clearDeniedAttempt = () => {
 export async function signOutEverly(): Promise<void> {
   setStoredUser(null);
   clearDeniedAttempt();
+  try {
+    const { clearMeetToken } = await import('./googleMeetService');
+    clearMeetToken();
+  } catch {}
 }
 
 /**

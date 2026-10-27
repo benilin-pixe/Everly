@@ -80,10 +80,10 @@ async function seedInitialFiles(): Promise<MediaFile[]> {
 
   const sharedUser: AuthorizedUser = {
     email: SHARED_USER_EMAIL,
-    name: 'Ben Storage',
-    role: 'Shared User',
-    avatarInitials: 'BS',
-    avatarColor: 'from-indigo-500 to-purple-600',
+    name: 'Shana Love',
+    role: 'Owner',
+    avatarInitials: 'SL',
+    avatarColor: 'from-pink-500 to-rose-600',
   };
 
   const audioBlob1 = generateLofiWavBlob('piano', 18);

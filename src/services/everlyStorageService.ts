@@ -40,11 +40,19 @@ const STORE_NAME = 'unified_files';
 const STANDARD_QUOTA_BYTES = 15 * 1024 * 1024 * 1024; // 15 GB standard tier per account
 
 // In-memory connection states and tokens
-let driveAToken: string | null = getStoredAccessToken();
+let driveAToken: string | null = null;
 let driveBToken: string | null = null; // Can be connected independently
 
 let driveAConnected = true;
 let driveBConnected = true;
+
+export function setDriveATokenInMemory(token: string | null) {
+  driveAToken = token;
+}
+
+export function getDriveATokenInMemory(): string | null {
+  return driveAToken;
+}
 
 // In-memory registry of active local File/Blob objects to ensure immediate and persistent playback
 export const localMediaBlobRegistry = new Map<string, Blob | File>();
@@ -172,10 +180,10 @@ async function seedUnifiedStorage(db: IDBDatabase): Promise<UnifiedFileRecord[]>
 
   const sharedUser: AuthorizedUser = {
     email: SHARED_USER_EMAIL,
-    name: 'Ben Storage',
-    role: 'Shared User',
-    avatarInitials: 'BS',
-    avatarColor: 'from-indigo-500 to-purple-600',
+    name: 'Shana Love',
+    role: 'Owner',
+    avatarInitials: 'SL',
+    avatarColor: 'from-pink-500 to-rose-600',
   };
 
   const initialFiles: UnifiedFileRecord[] = [

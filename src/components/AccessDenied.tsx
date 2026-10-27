@@ -32,7 +32,7 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({
           Access Denied
         </h1>
         <p className="mt-2 text-rose-300 font-medium text-sm">
-          This Google account is not authorized to access Everly.
+          This account is not authorized to access Everly.
         </p>
 
         {/* Security Details */}
@@ -40,12 +40,12 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400">Attempted Account</span>
             <span className="font-mono text-rose-300 font-medium truncate max-w-[220px]">
-              {attemptedEmail || 'unknown@google.com'}
+              {attemptedEmail || 'unknown@example.com'}
             </span>
           </div>
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400">Access Policy</span>
-            <span className="text-slate-300">Strict Whitelist (2 Authorized Google Accounts)</span>
+            <span className="text-slate-300">Strict Whitelist (2 Authorized Owners)</span>
           </div>
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400">Storage Vault</span>
@@ -55,10 +55,10 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({
           <div className="pt-2 border-t border-white/5 flex items-start gap-2 text-xs text-slate-400 leading-relaxed">
             <Lock className="w-4 h-4 text-rose-400/80 shrink-0 mt-0.5" />
             <div>
-              Access is strictly restricted to verified Google identities:
+              Access is strictly restricted to verified owner accounts:
               <div className="mt-1 font-mono text-[11px] text-slate-200 space-y-0.5">
                 <div>• <span className="text-white font-medium">{PRIMARY_OWNER_EMAIL}</span> <span className="text-emerald-400 font-sans font-semibold">(Owner)</span></div>
-                <div>• <span className="text-white font-medium">{SHARED_USER_EMAIL}</span> <span className="text-indigo-400 font-sans font-semibold">(Member)</span></div>
+                <div>• <span className="text-white font-medium">{SHARED_USER_EMAIL}</span> <span className="text-pink-400 font-sans font-semibold">(Owner)</span></div>
               </div>
               <div className="mt-1 text-[11px] text-rose-400/90">
                 All other accounts (including benilin40@gmail.com) are rejected.
@@ -72,10 +72,10 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({
           <button
             type="button"
             onClick={handleSwitchAccount}
-            className="w-full py-3.5 px-4 bg-white hover:bg-slate-100 text-slate-900 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+            className="w-full py-3.5 px-4 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
           >
             <RefreshCw className="w-4 h-4" />
-            Sign In with Another Google Account
+            Return to Owner Log In
           </button>
 
           <button

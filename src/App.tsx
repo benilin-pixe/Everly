@@ -29,6 +29,7 @@ import {
   syncUserProfileToFirestore,
 } from './services/firestoreService';
 
+import { Sparkles } from 'lucide-react';
 import { Navbar, TabType } from './components/Navbar';
 import { StorageModal } from './components/StorageBar';
 import { StorageServersModal } from './components/StorageServersModal';
@@ -41,6 +42,7 @@ import { MusicTab } from './components/MusicTab';
 import { DocumentsTab } from './components/DocumentsTab';
 import { UploadCenterTab } from './components/UploadCenterTab';
 import { MemoryBoardTab } from './components/MemoryBoardTab';
+import { GoogleMeetView } from './components/GoogleMeetView';
 import { AudioPlayerBar } from './components/AudioPlayerBar';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
 import { SoundtrackManagerModal } from './components/SoundtrackManagerModal';
@@ -73,6 +75,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthorizedUser | null>(null);
   const [deniedAttempt, setDeniedAttempt] = useState<string | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  const [loginTargetEmail, setLoginTargetEmail] = useState<string>('');
 
   // App content state
   const [currentTab, setCurrentTab] = useState<TabType>('moments');
@@ -208,6 +211,7 @@ export default function App() {
     setStoredUser(user);
     setDeniedAttempt(null);
     clearDeniedAttempt();
+    setLoginTargetEmail('');
   };
 
   const handleLoginDenied = (email: string) => {
@@ -221,7 +225,23 @@ export default function App() {
     try {
       await signOutEverly();
     } catch (e) {
-      console.warn('[Logout] Error during Google signOut:', e);
+      console.warn('[Logout] Error during signOut:', e);
+    }
+    setCurrentUser(null);
+    setStoredUser(null);
+    setDeniedAttempt(null);
+    clearDeniedAttempt();
+    setLoginTargetEmail('');
+    setIsPlaying(false);
+    setIsVideoPlaying(false);
+  };
+
+  // Securely initiate account switch by clearing current session and prompting password for target owner
+  const handleInitiateSwitchUser = async (targetEmail: string) => {
+    try {
+      await signOutEverly();
+    } catch (e) {
+      console.warn('[SwitchUser] Error during session teardown:', e);
     }
     setCurrentUser(null);
     setStoredUser(null);
@@ -229,26 +249,7 @@ export default function App() {
     clearDeniedAttempt();
     setIsPlaying(false);
     setIsVideoPlaying(false);
-  };
-
-  const handleSwitchUser = () => {
-    if (!currentUser) return;
-    const nextEmail =
-      currentUser.email.toLowerCase() === 'benilin76@gmail.com'
-        ? 'shanalove917@gmail.com'
-        : 'benilin76@gmail.com';
-    const info = AUTHORIZED_USERS[nextEmail];
-    if (info) {
-      const nextUser: AuthorizedUser = {
-        email: nextEmail,
-        name: info.name,
-        role: info.role,
-        avatarInitials: info.avatarInitials,
-        avatarColor: info.avatarColor,
-      };
-      setCurrentUser(nextUser);
-      setStoredUser(nextUser);
-    }
+    setLoginTargetEmail(targetEmail);
   };
 
   // Media Operations
@@ -337,7 +338,7 @@ export default function App() {
       <div className="min-h-screen bg-[#070a10] flex items-center justify-center text-slate-400">
         <div className="flex items-center gap-3">
           <div className="w-5 h-5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm font-medium">Loading couple portal...</span>
+          <span className="text-sm font-medium">Loading Everly...</span>
         </div>
       </div>
     );
@@ -360,6 +361,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <LoginModal
+        initialEmail={loginTargetEmail}
         onLoginSuccess={handleLoginSuccess}
         onLoginDenied={handleLoginDenied}
       />
@@ -392,6 +394,7 @@ export default function App() {
         onSelectTab={setCurrentTab}
         currentUser={currentUser}
         onLogout={handleLogout}
+        onSwitchAccount={handleInitiateSwitchUser}
         storageUsagePercent={storageUsagePercent}
         onOpenStorageModal={() => setIsStorageModalOpen(true)}
         onOpenSoundtrackManager={() => setIsSoundtrackModalOpen(true)}
@@ -473,6 +476,10 @@ export default function App() {
           <MemoryBoardTab currentUser={currentUser} />
         )}
 
+        {currentTab === 'meet' && (
+          <GoogleMeetView currentUser={currentUser} />
+        )}
+
         {currentTab === 'dropzone' && (
           <UploadCenterTab
             currentUser={currentUser}
@@ -481,6 +488,17 @@ export default function App() {
             onOpenStorageServers={() => setIsStorageServersModalOpen(true)}
           />
         )}
+
+        {/* About Everly — A space for two friends */}
+        <div className="mt-12 mb-4 p-6 sm:p-7 rounded-3xl bg-[#0b0f19]/80 border border-white/10 backdrop-blur-md shadow-xl text-center max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-semibold mb-3">
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            <span>About Everly</span>
+          </div>
+          <p className="text-sm text-slate-300 leading-relaxed font-normal">
+            Everly is a personal space for two friends to keep their shared memories and meaningful moments together. It celebrates friendship, laughter, support and the little things worth remembering.
+          </p>
+        </div>
       </main>
 
       {/* Background Instrumental Music (Umbrella Theme) Player */}
@@ -521,6 +539,7 @@ export default function App() {
           setStorageStats(stats);
         }}
         onOpenStorageServers={() => setIsStorageServersModalOpen(true)}
+        onSwitchAccount={handleInitiateSwitchUser}
       />
 
       {/* Admin Storage Servers Page / Modal (Media.cm, Everly, Local Disk, S3/R2) */}

@@ -16,12 +16,15 @@
   "shanalove917@gmail.com": {
     "email": "shanalove917@gmail.com",
     "name": "Shana Love",
-    "role": "Member",
+    "role": "Owner",
     "isSetupComplete": true,
     "setupToken": "shana-setup-token-2026-secure",
     "avatarInitials": "SL",
     "avatarColor": "from-pink-500 to-rose-600",
     "linkedGoogleSub": "member-sub-222",
-    "googleLinkedAt": "2026-10-20T14:04:55.549Z"
+    "googleLinkedAt": "2026-10-20T14:04:55.549Z",
+    "passwordHash": "0354bb827426367422684e82220c4c061152278eaaa4b59bcacee0bb782db460cb15b3738c92f08e62583610c38b8dc2ea3ff8d179be735ba33e1c38f39041de",
+    "passwordSalt": "5b4a5d66b562a1da2731fc36efc3fc54",
+    "lastLoginAt": "2026-10-26T03:00:55.910Z"
   }
 }

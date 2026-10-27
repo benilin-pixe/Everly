@@ -160,6 +160,8 @@ export async function launchGoogleSignIn(): Promise<GoogleAuthResult> {
     const cred = await signInWithPopup(firebaseAuth, googleProvider);
     const user = cred.user;
     const idToken = await user.getIdToken();
+    const googleCred = GoogleAuthProvider.credentialFromResult(cred);
+    const accessToken = googleCred?.accessToken;
 
     return {
       googleSub: user.uid,
@@ -167,6 +169,7 @@ export async function launchGoogleSignIn(): Promise<GoogleAuthResult> {
       name: user.displayName || user.email?.split('@')[0] || 'Google User',
       avatarUrl: user.photoURL || undefined,
       idToken,
+      accessToken,
       emailVerified: Boolean(user.emailVerified),
     };
   } catch (firebaseErr: any) {

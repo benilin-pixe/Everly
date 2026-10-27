@@ -106,5 +106,10 @@ service cloud.firestore {
     match /chatMessages/{messageId} {
       allow read, write: if isAuthorizedAccount();
     }
+
+    // 5. Google Meet Spaces collection
+    match /meetSpaces/{spaceId} {
+      allow read, write: if isAuthorizedAccount();
+    }
   }
 }

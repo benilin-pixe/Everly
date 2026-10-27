@@ -22,18 +22,28 @@ import { AuthorizedUser } from '../types';
 interface LoginModalProps {
   onLoginSuccess: (user: AuthorizedUser) => void;
   onLoginDenied?: (attemptedEmail: string) => void;
+  initialEmail?: string;
+  onCancel?: () => void;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
   onLoginSuccess,
+  initialEmail = '',
+  onCancel,
 }) => {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSetupMode, setIsSetupMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (initialEmail) {
+      setEmail(initialEmail);
+    }
+  }, [initialEmail]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,15 +113,19 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       <div className="w-full max-w-md bg-[#0e131f]/95 backdrop-blur-xl border border-white/10 rounded-3xl p-7 sm:p-10 shadow-2xl relative z-10">
         {/* Brand Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600/20 via-pink-600/20 to-indigo-600/20 border border-rose-500/30 text-rose-400 mb-4 shadow-inner">
-            <Heart className="w-8 h-8 fill-rose-500/30 text-rose-400" />
+          <div className="inline-flex items-center justify-center mb-4">
+            <img
+              src="/apple-touch-icon.png"
+              alt="Everly"
+              className="w-16 h-16 rounded-2xl border border-rose-500/30 shadow-xl shadow-purple-900/40 object-cover"
+            />
           </div>
           <h1 className="text-3xl font-extrabold tracking-tight text-white flex items-center justify-center gap-2">
             <span>Everly</span>
             <Sparkles className="w-5 h-5 text-amber-300" />
           </h1>
-          <p className="mt-2 text-xs sm:text-sm text-rose-300/80 font-medium">
-            Private media vault & shared couple moments
+          <p className="mt-2 text-xs sm:text-sm text-rose-300/80 font-medium max-w-xs mx-auto">
+            Shared memories, inside jokes and everyday moments—all in one place.
           </p>
         </div>
 
@@ -139,6 +153,47 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
         {/* Login Form */}
         <form onSubmit={handleLogin} className="space-y-4">
+          {/* Quick Account Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Select Authorized Owner Account
+            </label>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setEmail(PRIMARY_OWNER_EMAIL);
+                  setErrorNotice(null);
+                }}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase()
+                    ? 'bg-rose-500/20 border-rose-500/60 text-white shadow-sm'
+                    : 'bg-[#080b11] border-white/10 text-slate-400 hover:text-slate-200 hover:border-white/20'
+                }`}
+              >
+                <div className="font-semibold text-xs text-white">BeniLin</div>
+                <div className="text-[10px] text-rose-300 font-mono truncate">{PRIMARY_OWNER_EMAIL}</div>
+                <span className="inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded bg-rose-500/30 text-rose-200 font-bold">OWNER</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmail(SHARED_USER_EMAIL);
+                  setErrorNotice(null);
+                }}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  email.toLowerCase() === SHARED_USER_EMAIL.toLowerCase()
+                    ? 'bg-rose-500/20 border-rose-500/60 text-white shadow-sm'
+                    : 'bg-[#080b11] border-white/10 text-slate-400 hover:text-slate-200 hover:border-white/20'
+                }`}
+              >
+                <div className="font-semibold text-xs text-white">Shana Love</div>
+                <div className="text-[10px] text-pink-300 font-mono truncate">{SHARED_USER_EMAIL}</div>
+                <span className="inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded bg-pink-500/30 text-pink-200 font-bold">OWNER</span>
+              </button>
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
               Authorized Email
@@ -232,11 +287,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             <div className="text-[11px] leading-relaxed">
               <span className="font-semibold text-white block">Authorized Access Only</span>
               <span className="text-slate-400">
-                Exclusive couple portal. Access is strictly limited to verified accounts:
+                A private shared space for two friends. Access is strictly limited to verified accounts:
               </span>
               <div className="mt-1 font-mono text-[10px] space-y-0.5 text-rose-300">
                 <div>• {PRIMARY_OWNER_EMAIL} <span className="text-emerald-400 font-sans font-semibold">(Owner)</span></div>
-                <div>• {SHARED_USER_EMAIL} <span className="text-indigo-400 font-sans font-semibold">(Member)</span></div>
+                <div>• {SHARED_USER_EMAIL} <span className="text-pink-400 font-sans font-semibold">(Owner)</span></div>
               </div>
             </div>
           </div>

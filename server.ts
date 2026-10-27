@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws';
 import { setupRealtimeWebSocket, createCommunicationRouter } from './server/realtimeServer.js';
 import { createAuthRouter } from './server/authRouter.js';
 import { createStorageRouter } from './server/storageRouter.js';
+import { createMeetRouter } from './server/meetRouter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,10 +17,11 @@ async function startServer() {
 
   app.use(express.json({ limit: '20mb' }));
 
-  // Mount Communication API, Auth API & Storage API
+  // Mount Communication API, Auth API, Storage API & Google Meet API
   app.use('/api/comm', createCommunicationRouter());
   app.use('/api/auth', createAuthRouter());
   app.use('/api/storage', createStorageRouter());
+  app.use('/api/meet', createMeetRouter());
 
   const server = http.createServer(app);
 

@@ -1,10 +1,28 @@
-import { getFirestore, doc, getDocFromServer, collection, getDocs, addDoc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  getDocFromServer,
+  collection,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+} from 'firebase/firestore';
 import { firebaseApp, firebaseAuth } from './firebaseAuth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { MemoryNote, AuthorizedUser } from '../types';
 
-// CRITICAL: Initialize Firestore using the provisioned database ID
-export const db = getFirestore(firebaseApp, (firebaseConfig as any).firestoreDatabaseId);
+export const FIRESTORE_PROJECT_ID: string =
+  firebaseConfig.projectId || 'gen-lang-client-0012308220';
+
+export const FIRESTORE_DATABASE_ID: string =
+  (firebaseConfig as any).firestoreDatabaseId ||
+  (typeof process !== 'undefined' && (process.env as any)?.VITE_FIREBASE_DATABASE_ID) ||
+  'ai-studio-everly-cd5ac139-cf00-4957-bc41-efe152baebda';
+
+// CRITICAL: Initialize single shared Firestore instance using the verified named database ID
+export const db = getFirestore(firebaseApp, FIRESTORE_DATABASE_ID);
 
 export enum OperationType {
   CREATE = 'create',
@@ -53,20 +71,55 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
+export interface FirestoreConnectionDiagnostic {
+  connected: boolean;
+  status: 'connected' | 'permission-denied' | 'database-not-found' | 'network-error' | 'unauthenticated' | 'error';
+  projectId: string;
+  databaseId: string;
+  message: string;
+}
+
 /**
- * Validate connection to Firestore on boot
+ * Validate connection to Firestore on boot with specific actionable diagnostics
  */
-export async function testFirestoreConnection(): Promise<boolean> {
-  const path = 'test/connection';
+export async function testFirestoreConnection(): Promise<FirestoreConnectionDiagnostic> {
+  const diagnostic: FirestoreConnectionDiagnostic = {
+    connected: false,
+    status: 'error',
+    projectId: FIRESTORE_PROJECT_ID,
+    databaseId: FIRESTORE_DATABASE_ID,
+    message: '',
+  };
+
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    return true;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+    const snap = await getDocFromServer(doc(db, 'test', 'connection'));
+    diagnostic.connected = true;
+    diagnostic.status = 'connected';
+    diagnostic.message = `Firestore connected successfully (Project: ${FIRESTORE_PROJECT_ID}, Database: ${FIRESTORE_DATABASE_ID}, doc exists: ${snap.exists()})`;
+    return diagnostic;
+  } catch (error: any) {
+    const errorMsg: string = error?.message || String(error);
+    const errorCode: string = error?.code || '';
+
+    if (errorMsg.includes('Database') && errorMsg.includes('not found')) {
+      diagnostic.status = 'database-not-found';
+      diagnostic.message = `Cloud Firestore database '${FIRESTORE_DATABASE_ID}' not found in project '${FIRESTORE_PROJECT_ID}'. Please verify database ID in Firebase Console.`;
+      console.error(`[Firestore Diagnostic] ${diagnostic.message}`);
+    } else if (errorCode === 'permission-denied' || errorMsg.includes('insufficient permissions')) {
+      // Permission denied proves the cloud database exists, is reachable, and enforcing rules!
+      diagnostic.connected = true;
+      diagnostic.status = 'permission-denied';
+      diagnostic.message = `Connected to cloud database '${FIRESTORE_DATABASE_ID}' in project '${FIRESTORE_PROJECT_ID}'. Access rules require verified authentication.`;
+    } else if (errorMsg.includes('the client is offline') || errorCode === 'unavailable') {
+      diagnostic.status = 'network-error';
+      diagnostic.message = `Network connectivity error reaching Firestore (Project: ${FIRESTORE_PROJECT_ID}, Database: ${FIRESTORE_DATABASE_ID}). Retrying on reconnect.`;
+      console.warn(`[Firestore Diagnostic] ${diagnostic.message}`);
+    } else {
+      diagnostic.status = 'error';
+      diagnostic.message = `Firestore diagnostic (Project: ${FIRESTORE_PROJECT_ID}, Database: ${FIRESTORE_DATABASE_ID}): ${errorMsg}`;
     }
-    // Expected to encounter permission or not-found, meaning connection is established
-    return true;
+
+    return diagnostic;
   }
 }
 
@@ -97,13 +150,30 @@ export async function syncUserProfileToFirestore(user: AuthorizedUser): Promise<
   }
 }
 
+// Active subscription management to prevent duplicate listeners
+let activeNotesUnsubscribe: (() => void) | null = null;
+
 /**
- * Subscribe to Memory Notes from Firestore
+ * Subscribe to Memory Notes from Firestore with duplicate listener protection
+ * and pre-flight Firebase authentication check to prevent permission failures.
  */
 export function subscribeFirestoreMemoryNotes(
   onNotes: (notes: MemoryNote[]) => void,
   onError?: (err: Error) => void
 ): () => void {
+  // Wait for Firebase authentication before attaching protected listeners (Requirement 3)
+  const currentFirebaseUser = firebaseAuth.currentUser;
+  if (!currentFirebaseUser) {
+    console.info('[Firestore] Deferring memoryNotes listener: waiting for Firebase authenticated session.');
+    return () => {};
+  }
+
+  // Clean up any existing active listener to prevent memory leaks and duplicate triggers
+  if (activeNotesUnsubscribe) {
+    activeNotesUnsubscribe();
+    activeNotesUnsubscribe = null;
+  }
+
   const notesPath = 'memoryNotes';
   try {
     const q = query(collection(db, notesPath));
@@ -128,25 +198,45 @@ export function subscribeFirestoreMemoryNotes(
             colorScheme: d.colorScheme || 'rose',
           });
         });
-        // Sort descending by date
         notes.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         onNotes(notes);
       },
       (error) => {
+        // Stop retry loop on permission-denied
+        if (error.code === 'permission-denied') {
+          console.warn('[Firestore] Permission denied for memoryNotes listener. Disconnecting listener to avoid retry loop.');
+          if (activeNotesUnsubscribe) {
+            activeNotesUnsubscribe();
+            activeNotesUnsubscribe = null;
+          }
+        }
         if (onError) onError(error);
-        handleFirestoreError(error, OperationType.GET, notesPath);
       }
     );
-    return unsubscribe;
+
+    activeNotesUnsubscribe = unsubscribe;
+    return () => {
+      if (activeNotesUnsubscribe === unsubscribe) {
+        activeNotesUnsubscribe = null;
+      }
+      unsubscribe();
+    };
   } catch (error) {
-    handleFirestoreError(error, OperationType.GET, notesPath);
+    if (onError && error instanceof Error) onError(error);
+    return () => {};
   }
 }
 
 /**
  * Add a new Memory Note to Firestore
  */
-export async function addMemoryNoteToFirestore(note: MemoryNote): Promise<void> {
+export async function addMemoryNoteToFirestore(note: MemoryNote): Promise<boolean> {
+  const currentFirebaseUser = firebaseAuth.currentUser;
+  if (!currentFirebaseUser) {
+    console.info('[Firestore] User not authenticated in Firebase Auth; note saved to local vault.');
+    return false;
+  }
+
   const notesPath = 'memoryNotes';
   try {
     const noteRef = doc(db, notesPath, note.id);
@@ -160,7 +250,12 @@ export async function addMemoryNoteToFirestore(note: MemoryNote): Promise<void> 
       colorScheme: note.colorScheme,
       createdAt: note.createdAt,
     });
-  } catch (error) {
+    return true;
+  } catch (error: any) {
+    if (error?.code === 'permission-denied') {
+      console.warn('[Firestore] Permission denied saving note to cloud; preserved in local vault.');
+      return false;
+    }
     handleFirestoreError(error, OperationType.WRITE, `${notesPath}/${note.id}`);
   }
 }
@@ -168,11 +263,70 @@ export async function addMemoryNoteToFirestore(note: MemoryNote): Promise<void> 
 /**
  * Delete a Memory Note from Firestore
  */
-export async function deleteMemoryNoteFromFirestore(noteId: string): Promise<void> {
+export async function deleteMemoryNoteFromFirestore(noteId: string): Promise<boolean> {
+  const currentFirebaseUser = firebaseAuth.currentUser;
+  if (!currentFirebaseUser) {
+    return false;
+  }
+
   const notePath = `memoryNotes/${noteId}`;
   try {
     await deleteDoc(doc(db, 'memoryNotes', noteId));
-  } catch (error) {
+    return true;
+  } catch (error: any) {
+    if (error?.code === 'permission-denied') {
+      console.warn('[Firestore] Permission denied deleting note from cloud; removed locally.');
+      return false;
+    }
     handleFirestoreError(error, OperationType.DELETE, notePath);
   }
+}
+
+// ----------------------------------------------------
+// Draft Recovery Helpers (Ensures user input is never lost)
+// ----------------------------------------------------
+const DRAFT_STORAGE_KEY = 'everly_memory_note_draft';
+
+function getStorage(): Storage | null {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage;
+    }
+    if (typeof globalThis !== 'undefined' && (globalThis as any).localStorage) {
+      return (globalThis as any).localStorage;
+    }
+  } catch {}
+  return null;
+}
+
+export function saveLocalDraft(text: string): void {
+  try {
+    const storage = getStorage();
+    if (storage) {
+      if (text.trim()) {
+        storage.setItem(DRAFT_STORAGE_KEY, text);
+      } else {
+        storage.removeItem(DRAFT_STORAGE_KEY);
+      }
+    }
+  } catch {}
+}
+
+export function getLocalDraft(): string {
+  try {
+    const storage = getStorage();
+    if (storage) {
+      return storage.getItem(DRAFT_STORAGE_KEY) || '';
+    }
+  } catch {}
+  return '';
+}
+
+export function clearLocalDraft(): void {
+  try {
+    const storage = getStorage();
+    if (storage) {
+      storage.removeItem(DRAFT_STORAGE_KEY);
+    }
+  } catch {}
 }

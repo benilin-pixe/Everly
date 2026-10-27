@@ -84,8 +84,11 @@ export function loadAuthStore(): Record<string, OwnerAuthRecord> {
     try {
       const raw = fs.readFileSync(AUTH_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
-      authCache = { ...DEFAULT_AUTH_STATE, ...parsed };
-      return authCache!;
+      const loaded: Record<string, OwnerAuthRecord> = { ...DEFAULT_AUTH_STATE, ...parsed };
+      if (loaded[BENILIN_EMAIL]) loaded[BENILIN_EMAIL].role = 'Owner';
+      if (loaded[SHANALOVE_EMAIL]) loaded[SHANALOVE_EMAIL].role = 'Owner';
+      authCache = loaded;
+      return authCache;
     } catch (e) {
       console.error('[AuthStore] Error loading auth file:', e);
     }
@@ -108,7 +111,8 @@ function saveAuthStore() {
 
 export function isAuthorizedOwnerEmail(email?: string): boolean {
   if (!email) return false;
-  return email.toLowerCase().trim() === BENILIN_EMAIL;
+  const lower = email.toLowerCase().trim();
+  return lower === BENILIN_EMAIL || lower === SHANALOVE_EMAIL;
 }
 
 export function isAuthorizedUserEmail(email?: string): boolean {

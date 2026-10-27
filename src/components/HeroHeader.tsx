@@ -55,25 +55,30 @@ export const HeroHeader: React.FC<HeroHeaderProps> = ({
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-sky-500/5 via-transparent to-transparent pointer-events-none" />
 
       <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6 p-6 sm:p-8">
-        {/* Left Column: Title, Live Date & Time, & Greeting */}
+        {/* Left Column: Title, Subtitle, & Live Greeting */}
         <div className="space-y-2.5">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5 drop-shadow-md">
-              <span>{greeting}</span>
-              <span className="inline-flex p-1.5 rounded-xl bg-white/10 border border-white/20">
-                {timeIcon}
-              </span>
+              <span>A space for two friends.</span>
             </h1>
           </div>
 
-          {/* Live Date & Time Component */}
-          <div className="pt-0.5">
-            <LiveClock variant="hero" />
-          </div>
-
-          <p className="text-xs sm:text-sm text-sky-200/90 max-w-xl leading-relaxed pt-1 font-medium drop-shadow">
-            {subGreeting}
+          <p className="text-xs sm:text-sm text-sky-200/90 max-w-xl leading-relaxed font-medium drop-shadow">
+            Shared memories, inside jokes and everyday moments—all in one place.
           </p>
+
+          {/* Live Date, Time & Greeting Component */}
+          <div className="pt-1.5 flex flex-wrap items-center gap-2.5 text-xs text-slate-300">
+            <span className="font-semibold text-rose-300 flex items-center gap-1.5">
+              <span>{greeting}</span>
+              <span className="inline-flex p-1 rounded-lg bg-white/10 border border-white/20">
+                {timeIcon}
+              </span>
+            </span>
+            <div className="border-l border-white/10 pl-2.5">
+              <LiveClock variant="hero" />
+            </div>
+          </div>
         </div>
 
         {/* Right Column: Quick Status & Quota Stats Card */}
@@ -84,7 +89,7 @@ export const HeroHeader: React.FC<HeroHeaderProps> = ({
             </div>
             <div>
               <div className="text-[10px] text-slate-300 uppercase tracking-wider font-semibold">
-                Couples Vault
+                Friends Vault
               </div>
               <div className="text-xs font-bold text-white font-mono">
                 {stats.itemCount} Memories Stored
