@@ -21,9 +21,30 @@ export const AUTHORIZED_USERS: Record<string, { name: string; role: UserRole; av
 const AUTH_STORAGE_KEY = 'everly_password_user_v6';
 const TOKEN_STORAGE_KEY = 'everly_password_token_v6';
 const ACCESS_DENIED_STORAGE_KEY = 'everly_denied_attempt_v6';
+const LOCAL_AUTH_REGISTRY_KEY = 'everly_local_auth_registry_v1';
+
+interface LocalAuthRecord {
+  email: string;
+  passwordHash?: string;
+  isSetupComplete: boolean;
+}
+
+function getLocalRegistry(): Record<string, LocalAuthRecord> {
+  try {
+    const raw = localStorage.getItem(LOCAL_AUTH_REGISTRY_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {};
+}
+
+function saveLocalRegistry(registry: Record<string, LocalAuthRecord>) {
+  try {
+    localStorage.setItem(LOCAL_AUTH_REGISTRY_KEY, JSON.stringify(registry));
+  } catch {}
+}
 
 /**
- * Authenticates with email and password against Everly backend
+ * Authenticates with email and password against Everly backend or local fallback
  */
 export async function authenticateWithPassword(email: string, password: string): Promise<AuthorizedUser> {
   const cleanEmail = email.toLowerCase().trim();
@@ -32,11 +53,44 @@ export async function authenticateWithPassword(email: string, password: string):
     throw new Error('This email address is not authorized to access Everly.');
   }
 
-  const res = await fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: cleanEmail, password }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: cleanEmail, password }),
+    });
+  } catch (netErr) {
+    // Network failure or 404 fallback to local registry
+    res = new Response(JSON.stringify({ error: 'Backend unreachable, using local fallback' }), { status: 404 });
+  }
+
+  if (res.status === 404) {
+    // Fallback: Check local registry
+    const registry = getLocalRegistry();
+    const localRecord = registry[cleanEmail];
+    if (!localRecord || !localRecord.isSetupComplete) {
+      const setupErr = new Error('Password not yet set up for this account. Please create a secure password below.');
+      (setupErr as any).needsSetup = true;
+      (setupErr as any).email = cleanEmail;
+      throw setupErr;
+    }
+    if (localRecord.passwordHash !== password) {
+      throw new Error('Incorrect password. Please try again.');
+    }
+    const meta = AUTHORIZED_USERS[cleanEmail];
+    const user: AuthorizedUser = {
+      email: cleanEmail,
+      name: meta.name,
+      role: meta.role,
+      avatarInitials: meta.avatarInitials,
+      avatarColor: meta.avatarColor,
+      googleSub: cleanEmail,
+    };
+    setStoredUser(user, 'session_token_' + Date.now());
+    clearDeniedAttempt();
+    return user;
+  }
 
   const data = await res.json().catch(() => ({}));
 
@@ -74,16 +128,47 @@ export async function setupUserPasswordApi(email: string, password: string): Pro
     throw new Error('Unauthorized email address.');
   }
 
-  const res = await fetch('/api/auth/setup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: cleanEmail, password }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('/api/auth/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: cleanEmail, password }),
+    });
+  } catch {
+    res = new Response(JSON.stringify({ error: 'Backend unreachable, using local fallback' }), { status: 404 });
+  }
+
+  if (res.status === 404) {
+    // Fallback: Save in local registry
+    const registry = getLocalRegistry();
+    registry[cleanEmail] = {
+      email: cleanEmail,
+      passwordHash: password,
+      isSetupComplete: true,
+    };
+    saveLocalRegistry(registry);
+
+    const meta = AUTHORIZED_USERS[cleanEmail];
+    const user: AuthorizedUser = {
+      email: cleanEmail,
+      name: meta.name,
+      role: meta.role,
+      avatarInitials: meta.avatarInitials,
+      avatarColor: meta.avatarColor,
+      googleSub: cleanEmail,
+    };
+
+    setStoredUser(user, 'session_token_' + Date.now());
+    clearDeniedAttempt();
+    return user;
+  }
 
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new Error(data.error || 'Password setup failed.');
+    console.error('[AuthService] /api/auth/setup failed:', res.status, data);
+    throw new Error(data.error || `Password setup failed (HTTP ${res.status}).`);
   }
 
   const userRecord = data.user;

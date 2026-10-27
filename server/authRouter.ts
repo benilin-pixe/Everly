@@ -117,6 +117,7 @@ export function createAuthRouter() {
     });
 
     if (!result.success) {
+      console.error('[AuthRouter] Password setup failure for email:', email.trim(), 'Reason:', result.error);
       res.status(400).json({ error: result.error || 'Password setup failed.' });
       return;
     }
